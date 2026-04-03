@@ -1,0 +1,135 @@
+# docker-compose.dev.yml — TeamSync AI full development stack
+# Includes: PostgreSQL, n8n, FastAPI backend (hot-reload), Next.js frontend (dev server), demo page
+# Usage: make dev  OR  docker compose -f pipeline/docker/docker-compose.dev.yml --env-file .env up -d
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-n8n}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-teamsync}
+    volumes:
+      - teamsync_postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-n8n} -d ${DB_NAME:-teamsync}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── n8n workflow engine ────────────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # Database
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${DB_NAME:-teamsync}
+      DB_POSTGRESDB_USER: ${DB_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD}
+      # Security
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+      # Networking
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: ${N8N_PUBLIC_URL:-http://localhost:5678}/
+      # Execution
+      EXECUTIONS_PROCESS: main
+      N8N_RUNNERS_ENABLED: "true"
+      EXECUTIONS_DATA_PRUNE: "true"
+      EXECUTIONS_DATA_MAX_AGE: 336
+      # Logging
+      N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+      # Allow backend to be called from n8n (CORS)
+      N8N_CORS_ALLOW_ORIGIN: "http://localhost:3000,http://localhost:8000"
+    volumes:
+      - teamsync_n8n_data:/home/node/.n8n
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── FastAPI backend (Python) ───────────────────────────────────────────────
+  backend:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-n8n}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-teamsync}
+      N8N_BASE_URL: http://n8n:5678
+      N8N_CHAT_WEBHOOK_ID: ${N8N_CHAT_WEBHOOK_ID:-unified-webhook-id}
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      RAKUTEN_AI_API_URL: ${RAKUTEN_AI_API_URL:-}
+      RAKUTEN_AI_API_KEY: ${RAKUTEN_AI_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      DEBUG: "true"
+    volumes:
+      - ../../backend/src:/app/src:ro   # hot-reload: mount source
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ── Next.js frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../../frontend
+      dockerfile: Dockerfile
+      target: development
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_N8N_CHAT_URL: ${N8N_CHAT_URL:-/webhook/unified-webhook-id/chat}
+      API_URL: http://backend:8000    # server-side (BFF) calls go to backend directly
+      BACKEND_API_KEY: ${BACKEND_API_KEY}
+    volumes:
+      - ../../frontend/src:/app/src:ro
+      - ../../frontend/public:/app/public:ro
+    depends_on:
+      - backend
+
+  # ── Demo landing page ──────────────────────────────────────────────────────
+  demo:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.demo
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    environment:
+      N8N_CHAT_URL: ${N8N_CHAT_URL:-/webhook/unified-webhook-id/chat}
+      N8N_UPSTREAM_BASE: http://n8n:5678
+      DEMO_TITLE: ${DEMO_TITLE:-TeamSync AI}
+      DEMO_BADGE: ${DEMO_BADGE:-Dev Build}
+    depends_on:
+      - n8n
+
+volumes:
+  teamsync_postgres_data:
+    external: true
+  teamsync_n8n_data:
+    external: true

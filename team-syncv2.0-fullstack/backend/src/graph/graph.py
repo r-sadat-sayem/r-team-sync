@@ -1,0 +1,86 @@
+"""
+Compiled LangGraph workflow.
+
+Phase 1 graph (no HITL):
+  START → [route_entry] → analyze → [route_after_analyze] → generate_prd → validate → END
+
+Phase 2 will extend this by inserting email_interrupt and jira_interrupt nodes
+between validate and END, and adding the resume route.
+
+The graph is compiled once at app startup (in main.py lifespan) with a
+PostgreSQL checkpointer. Each conversation is identified by thread_id = session_id.
+"""
+import logging
+
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+
+from src.graph.edges import route_after_analyze, route_entry
+from src.graph.nodes import analyze, generate_prd, validate
+from src.graph.state import PRDState
+
+logger = logging.getLogger(__name__)
+
+
+def build_graph(checkpointer=None):
+    """
+    Build and compile the PRD workflow graph.
+
+    Args:
+        checkpointer: LangGraph checkpointer instance.
+                      Pass None to use an in-memory saver (tests only).
+                      Pass AsyncPostgresSaver for production.
+
+    Returns:
+        Compiled LangGraph graph ready to invoke.
+    """
+    builder = StateGraph(PRDState)
+
+    # ── Nodes ─────────────────────────────────────────────────
+    builder.add_node("analyze",      analyze)
+    builder.add_node("generate_prd", generate_prd)
+    builder.add_node("validate",     validate)
+
+    # ── Edges ─────────────────────────────────────────────────
+    # Entry: route based on current mode in state
+    builder.add_conditional_edges(
+        START,
+        route_entry,
+        {"analyze": "analyze", "generate_prd": "generate_prd"},
+    )
+
+    # After analyze: either keep chatting (END) or kick off PRD generation
+    builder.add_conditional_edges(
+        "analyze",
+        route_after_analyze,
+        {"generate_prd": "generate_prd", END: END},
+    )
+
+    # generate_prd always flows into validate
+    builder.add_edge("generate_prd", "validate")
+
+    # validate → END for Phase 1
+    # Phase 2: change this to "email_interrupt"
+    builder.add_edge("validate", END)
+
+    resolved_checkpointer = checkpointer if checkpointer is not None else MemorySaver()
+    graph = builder.compile(checkpointer=resolved_checkpointer)
+
+    logger.info("LangGraph PRD workflow compiled (Phase 1)")
+    return graph
+
+
+def get_default_state() -> PRDState:
+    """Return a clean initial state for a new session."""
+    return PRDState(
+        messages=[],
+        mode="analyze",
+        context_summary="",
+        prd_markdown="",
+        quality_score=0,
+        grade="",
+        file_name="",
+        recipient_email="",
+        recipient_name="",
+        jira_decision="",
+    )

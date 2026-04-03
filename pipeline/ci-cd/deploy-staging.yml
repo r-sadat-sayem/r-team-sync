@@ -1,0 +1,94 @@
+# deploy-staging.yml — Deploy to staging on push to develop branch
+# Builds images, pushes to registry, deploys to staging server via SSH.
+
+name: Deploy — Staging
+
+on:
+  push:
+    branches: [develop]
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}/teamsync
+
+jobs:
+  deploy-staging:
+    name: Build & Deploy to Staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Build and push images ───────────────────────────────────────────
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: backend
+          target: production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}-backend:staging
+            ${{ env.REGISTRY }}-backend:${{ github.sha }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          target: production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}-frontend:staging
+            ${{ env.REGISTRY }}-frontend:${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.STAGING_API_URL }}
+            NEXT_PUBLIC_N8N_CHAT_URL=${{ secrets.STAGING_CHAT_URL }}
+
+      - name: Build and push demo
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.demo
+          push: true
+          tags: ${{ env.REGISTRY }}-demo:staging
+
+      # ── Deploy to staging server ────────────────────────────────────────
+      - name: Deploy to staging via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            cd ${{ secrets.STAGING_DEPLOY_PATH }}
+
+            # Pull latest images
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose -f docker-compose.yml pull
+
+            # Restart services
+            docker compose -f docker-compose.yml up -d --remove-orphans
+
+            # Run migrations
+            docker compose -f docker-compose.yml exec -T backend alembic upgrade head
+
+            # Health check
+            sleep 10
+            curl -sf http://localhost:8000/health || exit 1
+            echo "Staging deployment successful"
+
+      - name: Notify Slack
+        if: always()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "${{ job.status == 'success' && '✅' || '❌' }} Staging deploy ${{ job.status }} — ${{ github.actor }} pushed to develop (${{ github.sha }})"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

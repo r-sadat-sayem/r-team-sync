@@ -1,0 +1,19 @@
+# docker-compose.demo.yml — Demo landing page only
+# Serves demo.html on port 4040, proxies /webhook/* to a local n8n instance.
+# Usage: make demo  OR  docker compose -f pipeline/docker/docker-compose.demo.yml --env-file .env up --build -d
+
+services:
+  teamsync-demo:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.demo
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      N8N_CHAT_URL: ${N8N_CHAT_URL:-/webhook/unified-webhook-id/chat}
+      N8N_UPSTREAM_BASE: ${N8N_UPSTREAM_BASE:-http://host.docker.internal:5678}
+      DEMO_TITLE: ${DEMO_TITLE:-TeamSync AI}
+      DEMO_BADGE: ${DEMO_BADGE:-Internal Build}

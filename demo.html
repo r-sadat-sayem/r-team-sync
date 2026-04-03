@@ -1,0 +1,1172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeamSync AI | PRD Automation Demo</title>
+  <meta
+    name="description"
+    content="TeamSync AI turns a product idea into a scored PRD, an emailed markdown artifact, and approved Jira work items."
+  />
+  <style>
+    :root {
+      --bg: #f4f1ea;
+      --surface: rgba(255, 252, 247, 0.82);
+      --surface-strong: #fffaf2;
+      --text: #1e2430;
+      --muted: #5b6472;
+      --line: rgba(38, 52, 74, 0.14);
+      --accent: #0f766e;
+      --accent-strong: #115e59;
+      --accent-soft: rgba(15, 118, 110, 0.12);
+      --warning: #b45309;
+      --warning-soft: rgba(180, 83, 9, 0.12);
+      --success: #166534;
+      --success-soft: rgba(22, 101, 52, 0.12);
+      --shadow: 0 24px 60px rgba(53, 44, 29, 0.12);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 14px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Avenir Next", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 30%),
+        radial-gradient(circle at top right, rgba(191, 219, 254, 0.5), transparent 28%),
+        linear-gradient(180deg, #fbf7ef 0%, #f4f1ea 46%, #efe9dd 100%);
+      min-height: 100vh;
+    }
+
+    a { color: inherit; }
+    img { max-width: 100%; }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 24px 0 56px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      backdrop-filter: blur(14px);
+      background: rgba(244, 241, 234, 0.8);
+      border-bottom: 1px solid rgba(38, 52, 74, 0.08);
+    }
+
+    .topbar-inner {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 16px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      text-decoration: none;
+    }
+
+    .brand-mark {
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-weight: 800;
+      background: linear-gradient(135deg, #0f766e, #14b8a6);
+      box-shadow: 0 14px 28px rgba(15, 118, 110, 0.25);
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 0.98rem;
+      letter-spacing: 0.01em;
+    }
+
+    .brand-copy span {
+      display: block;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent-strong);
+      background: rgba(15, 118, 110, 0.1);
+      border: 1px solid rgba(15, 118, 110, 0.18);
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button,
+    button.button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 13px 18px;
+      transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+      font-size: 0.94rem;
+    }
+
+    .button:hover,
+    button.button:hover {
+      transform: translateY(-1px);
+    }
+
+    .button-primary {
+      color: #fff;
+      background: linear-gradient(135deg, #0f766e, #14b8a6);
+      box-shadow: 0 16px 30px rgba(15, 118, 110, 0.24);
+    }
+
+    .button-secondary {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.5);
+      border: 1px solid rgba(38, 52, 74, 0.12);
+    }
+
+    .button-ghost {
+      color: var(--accent-strong);
+      background: rgba(15, 118, 110, 0.08);
+      border: 1px solid rgba(15, 118, 110, 0.18);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, 0.85fr);
+      gap: 24px;
+      padding-top: 28px;
+      align-items: stretch;
+    }
+
+    .hero-panel,
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-panel {
+      padding: 36px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-panel::after {
+      content: "";
+      position: absolute;
+      inset: auto -120px -120px auto;
+      width: 260px;
+      height: 260px;
+      background: radial-gradient(circle, rgba(15, 118, 110, 0.18), transparent 70%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      font-weight: 800;
+      color: var(--accent-strong);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.4rem, 4vw, 4.5rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+      max-width: 10ch;
+    }
+
+    .hero-lead {
+      margin: 18px 0 0;
+      color: var(--muted);
+      font-size: 1.08rem;
+      line-height: 1.8;
+      max-width: 60ch;
+    }
+
+    .hero-actions {
+      margin-top: 28px;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .metric-grid {
+      margin-top: 30px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric {
+      padding: 18px 16px;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.48);
+      border: 1px solid rgba(38, 52, 74, 0.1);
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 1.55rem;
+      letter-spacing: -0.04em;
+      margin-bottom: 6px;
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .status-panel {
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .status-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .status-title {
+      margin: 0;
+      font-size: 1.05rem;
+      letter-spacing: -0.02em;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .pill-success {
+      color: var(--success);
+      background: var(--success-soft);
+      border-color: rgba(22, 101, 52, 0.15);
+    }
+
+    .pill-warning {
+      color: var(--warning);
+      background: var(--warning-soft);
+      border-color: rgba(180, 83, 9, 0.15);
+    }
+
+    .status-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .status-item,
+    .review-card,
+    .resource-card,
+    .prompt-card,
+    .step-card {
+      padding: 18px;
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, 0.58);
+      border: 1px solid rgba(38, 52, 74, 0.1);
+    }
+
+    .status-item small,
+    .resource-card small {
+      display: block;
+      color: var(--muted);
+      font-size: 0.76rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 7px;
+      font-weight: 700;
+    }
+
+    .status-item strong {
+      display: block;
+      font-size: 0.96rem;
+      margin-bottom: 7px;
+    }
+
+    .status-item code {
+      display: block;
+      padding: 12px;
+      border-radius: 12px;
+      background: #1f2937;
+      color: #d1fae5;
+      font-size: 0.82rem;
+      overflow-x: auto;
+    }
+
+    .section {
+      margin-top: 26px;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .section-header h2 {
+      margin: 0;
+      font-size: clamp(1.55rem, 2vw, 2.15rem);
+      letter-spacing: -0.03em;
+    }
+
+    .section-header p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 62ch;
+      line-height: 1.7;
+    }
+
+    .review-grid,
+    .resources-grid,
+    .prompt-grid,
+    .steps-grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .review-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .resources-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .prompt-grid { grid-template-columns: 1.1fr 0.9fr; }
+    .steps-grid { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+    .review-card h3,
+    .resource-card h3,
+    .prompt-card h3,
+    .step-card h3 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .review-card p,
+    .resource-card p,
+    .prompt-card p,
+    .step-card p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 0.94rem;
+    }
+
+    .resource-card a {
+      display: inline-flex;
+      margin-top: 14px;
+      font-weight: 700;
+      color: var(--accent-strong);
+      text-decoration: none;
+    }
+
+    .prompt-card textarea {
+      width: 100%;
+      min-height: 200px;
+      resize: vertical;
+      margin-top: 16px;
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(38, 52, 74, 0.12);
+      background: #fffdfa;
+      color: var(--text);
+      font: inherit;
+      line-height: 1.6;
+    }
+
+    .prompt-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+
+    .chat-shell {
+      padding: 22px;
+    }
+
+    .chat-frame {
+      width: 100%;
+      min-height: 680px;
+      border: 1px solid rgba(38, 52, 74, 0.1);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.6);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .chat-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .chat-toolbar p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.6;
+    }
+
+    iframe {
+      width: 100%;
+      min-height: 680px;
+      border: 0;
+      display: none;
+      background: #fff;
+    }
+
+    .chat-fallback {
+      min-height: 680px;
+      padding: 40px 28px;
+      display: grid;
+      place-items: center;
+      text-align: center;
+    }
+
+    .chat-fallback-inner {
+      max-width: 580px;
+    }
+
+    .chat-fallback h3 {
+      margin: 0 0 12px;
+      font-size: 1.4rem;
+      letter-spacing: -0.03em;
+    }
+
+    .chat-fallback p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.75;
+    }
+
+    .chat-fallback-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-top: 22px;
+    }
+
+    .micro-note {
+      margin-top: 14px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    footer {
+      margin-top: 28px;
+      padding: 0 0 20px;
+      color: var(--muted);
+      font-size: 0.88rem;
+      text-align: center;
+      line-height: 1.7;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .prompt-grid,
+      .review-grid,
+      .resources-grid,
+      .steps-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    /* ── Local config panel ──────────────────────────────────────────────── */
+    .config-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(30, 36, 48, 0.55);
+      backdrop-filter: blur(6px);
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .config-overlay.open { display: flex; }
+
+    .config-panel {
+      background: var(--surface-strong);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      padding: 36px;
+      width: min(540px, 100%);
+      position: relative;
+    }
+
+    .config-panel h2 {
+      margin: 0 0 8px;
+      font-size: 1.35rem;
+      letter-spacing: -0.03em;
+    }
+
+    .config-panel p {
+      margin: 0 0 22px;
+      color: var(--muted);
+      font-size: 0.94rem;
+      line-height: 1.7;
+    }
+
+    .config-field label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .config-field input[type="text"] {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      border: 1px solid rgba(38, 52, 74, 0.18);
+      background: #fffdfa;
+      color: var(--text);
+      font: inherit;
+      font-size: 0.95rem;
+    }
+
+    .config-field input[type="text"]:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .config-hint {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.81rem;
+      line-height: 1.6;
+    }
+
+    .config-actions {
+      display: flex;
+      gap: 12px;
+      margin-top: 22px;
+      flex-wrap: wrap;
+    }
+
+    .config-close {
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      background: rgba(38, 52, 74, 0.08);
+      border: none;
+      border-radius: 999px;
+      width: 34px;
+      height: 34px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+    }
+
+    .config-close:hover { background: rgba(38, 52, 74, 0.14); }
+
+    @media (max-width: 720px) {
+      .shell,
+      .topbar-inner {
+        width: min(100vw - 20px, 1180px);
+      }
+
+      .hero-panel,
+      .status-panel,
+      .chat-shell {
+        padding: 22px;
+      }
+
+      .topbar-inner,
+      .status-header,
+      .section-header {
+        align-items: start;
+      }
+
+      .topbar-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .metric-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .chat-frame,
+      iframe,
+      .chat-fallback {
+        min-height: 560px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#top">
+        <div class="brand-mark">T</div>
+        <div class="brand-copy">
+          <strong id="brand-title">TeamSync AI</strong>
+          <span>Public review demo for PRD automation</span>
+        </div>
+      </a>
+      <div class="topbar-actions">
+        <span class="badge" id="review-badge">Public Review Build</span>
+        <a class="button button-secondary" href="DEMO_GUIDE.md" target="_blank" rel="noreferrer">Presenter Guide</a>
+        <button class="button button-ghost" id="open-config-button" type="button">Configure</button>
+        <a class="button button-primary" href="#chat" id="open-chat-link">Launch Live Demo</a>
+      </div>
+    </div>
+  </div>
+
+  <main class="shell" id="top">
+    <section class="hero">
+      <div class="hero-panel">
+        <p class="eyebrow">Idea to execution in one guided flow</p>
+        <h1>Turn a rough product idea into a reviewable delivery packet.</h1>
+        <p class="hero-lead">
+          TeamSync AI gathers requirements in chat, generates a scored PRD, hands off a markdown artifact by email,
+          and creates approved Jira work items. This page is designed for stakeholder review, not just internal demos.
+        </p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="#chat">Open embedded chat</a>
+          <a class="button button-ghost" href="#starter-prompt">Copy test prompt</a>
+        </div>
+        <div class="metric-grid">
+          <div class="metric">
+            <strong>5-8 min</strong>
+            <span>Typical end-to-end walkthrough from first message to Jira confirmation.</span>
+          </div>
+          <div class="metric">
+            <strong>4 steps</strong>
+            <span>Chat, PRD generation, email delivery, and Jira approval.</span>
+          </div>
+          <div class="metric">
+            <strong>15+</strong>
+            <span>Target test cases generated in the PRD validation stage.</span>
+          </div>
+          <div class="metric">
+            <strong>1 review gate</strong>
+            <span>Human approval is required before Jira ticket creation continues.</span>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel status-panel" aria-labelledby="status-heading">
+        <div class="status-header">
+          <div>
+            <h2 class="status-title" id="status-heading">Runtime status</h2>
+            <p class="hero-lead" style="margin:8px 0 0;font-size:0.95rem;max-width:none;">
+              The demo is configured at container runtime so reviewers can point the same build at a different n8n instance.
+            </p>
+          </div>
+          <span class="pill pill-warning" id="config-pill">Chat endpoint not configured</span>
+        </div>
+        <div class="status-list">
+          <div class="status-item">
+            <small>Current chat endpoint</small>
+            <strong id="endpoint-label">Waiting for configuration</strong>
+            <code id="endpoint-code">Set N8N_CHAT_URL at runtime.</code>
+          </div>
+          <div class="status-item">
+            <small>Review checklist</small>
+            <strong>What external reviewers should verify</strong>
+            <p style="margin:0;color:var(--muted);line-height:1.7;">
+              Chat response quality, PRD scoring, email resume link, Jira approval gate, and final Epic/Task/Subtask creation.
+            </p>
+          </div>
+          <div class="status-item">
+            <small>Supporting material</small>
+            <strong>Demo guide, test guide, and ready-made E2E datasets</strong>
+            <p style="margin:0;color:var(--muted);line-height:1.7;">
+              Use the linked docs below if you want a structured presentation run instead of exploratory clicking.
+            </p>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>What reviewers should expect</h2>
+          <p>
+            This experience is strongest when reviewers know what is real, what is simulated in the React prototype,
+            and what happens directly inside n8n. The standalone page below exercises the real chat webhook.
+          </p>
+        </div>
+      </div>
+      <div class="review-grid">
+        <article class="review-card">
+          <h3>Real automation path</h3>
+          <p>
+            The exported workflow handles memory, PRD generation, PRD scoring, email delivery, Jira approval, and final Jira creation.
+          </p>
+        </article>
+        <article class="review-card">
+          <h3>Human approval retained</h3>
+          <p>
+            The system pauses at the Jira approval form. Tickets are not created until someone explicitly approves the resume step.
+          </p>
+        </article>
+        <article class="review-card">
+          <h3>Demo-ready defaults</h3>
+          <p>
+            The page includes a starter prompt, fallback behavior for failed iframe embedding, and direct links for external review or backup presentation.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="starter-prompt">
+      <div class="section-header">
+        <div>
+          <h2>Starter prompts and review notes</h2>
+          <p>
+            Use these directly in chat. They are tuned to produce consistent PRD output and make it easier to judge whether the full flow is behaving correctly.
+          </p>
+        </div>
+      </div>
+      <div class="prompt-grid">
+        <article class="prompt-card">
+          <h3>Happy-path prompt</h3>
+          <p>Copy this into the chat for the main walkthrough.</p>
+          <label class="sr-only" for="starter-prompt-text">Starter prompt</label>
+          <textarea id="starter-prompt-text">I want to build a mobile expense tracking app for small business owners. They need to photograph receipts, auto-categorize expenses, and export reports to CSV. Target: iOS and Android, launch in Q3 2025.</textarea>
+          <div class="prompt-actions">
+            <button class="button button-primary" data-copy-target="starter-prompt-text">Copy prompt</button>
+            <a class="button button-secondary" href="E2E_TEST_DATA.md" target="_blank" rel="noreferrer">Open E2E data</a>
+          </div>
+        </article>
+        <article class="prompt-card">
+          <h3>Follow-up answers</h3>
+          <p>Use these when Sam asks for more detail, then confirm generation.</p>
+          <label class="sr-only" for="followup-prompt-text">Follow-up answers</label>
+          <textarea id="followup-prompt-text">Success metric: reduce manual expense entry time by 70%.
+Target users: freelancers and teams of up to 10 people.
+Key concern: offline mode because users travel frequently.
+
+Yes, go ahead.</textarea>
+          <div class="prompt-actions">
+            <button class="button button-ghost" data-copy-target="followup-prompt-text">Copy follow-up</button>
+            <a class="button button-secondary" href="TESTING_GUIDE.md" target="_blank" rel="noreferrer">Open testing guide</a>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Supporting documents</h2>
+          <p>These assets are served alongside the demo so reviewers can inspect setup, validation steps, and expected outcomes.</p>
+        </div>
+      </div>
+      <div class="resources-grid">
+        <article class="resource-card">
+          <small>Walkthrough</small>
+          <h3>Presenter guide</h3>
+          <p>Phase-by-phase speaking notes, expected quality scores, and failure fallbacks for live reviews.</p>
+          <a href="DEMO_GUIDE.md" target="_blank" rel="noreferrer">Open DEMO_GUIDE.md</a>
+        </article>
+        <article class="resource-card">
+          <small>Validation</small>
+          <h3>Testing guide</h3>
+          <p>Reset procedures, environment requirements, and end-to-end checkpoints mapped to the real workflow.</p>
+          <a href="TESTING_GUIDE.md" target="_blank" rel="noreferrer">Open TESTING_GUIDE.md</a>
+        </article>
+        <article class="resource-card">
+          <small>Reusable input</small>
+          <h3>E2E demo data</h3>
+          <p>Copy-and-paste prompts and approval data for happy-path, smoke, and failure-path review sessions.</p>
+          <a href="E2E_TEST_DATA.md" target="_blank" rel="noreferrer">Open E2E_TEST_DATA.md</a>
+        </article>
+        <article class="resource-card">
+          <small>Deployment</small>
+          <h3>Docker runbook</h3>
+          <p>Launch the demo as a static container, set the runtime chat URL, and share a review-safe endpoint.</p>
+          <a href="DEMO_DOCKER.md" target="_blank" rel="noreferrer">Open DEMO_DOCKER.md</a>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Flow under review</h2>
+          <p>Reviewers should be able to see the chain clearly before opening the live chat.</p>
+        </div>
+      </div>
+      <div class="steps-grid">
+        <article class="step-card">
+          <h3>1. Guided discovery</h3>
+          <p>Sam asks targeted requirement questions and stops when it has enough context instead of endlessly prompting.</p>
+        </article>
+        <article class="step-card">
+          <h3>2. PRD generation</h3>
+          <p>The workflow switches into generate mode and returns a structured markdown PRD plus a quality score.</p>
+        </article>
+        <article class="step-card">
+          <h3>3. Email handoff</h3>
+          <p>The PRD is converted to markdown binary and sent through the email approval path after a wait-form resume.</p>
+        </article>
+        <article class="step-card">
+          <h3>4. Jira creation</h3>
+          <p>After explicit approval, the workflow extracts the first Epic, FR, and TC and creates the Jira hierarchy.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="chat">
+      <div class="section-header">
+        <div>
+          <h2>Live chat endpoint</h2>
+          <p>
+            If iframe embedding is blocked by the upstream chat page or network policy, use the direct link. Both routes point at the same runtime-configured webhook URL.
+          </p>
+        </div>
+      </div>
+      <div class="panel chat-shell">
+        <div class="chat-toolbar">
+          <p id="chat-status-text">Waiting for an n8n chat endpoint.</p>
+          <div class="topbar-actions" style="margin-left:auto;">
+            <button class="button button-secondary" id="retry-embed-button" type="button">Retry embed</button>
+            <a class="button button-primary" href="#" id="direct-chat-link" target="_blank" rel="noreferrer">Open chat in new tab</a>
+          </div>
+        </div>
+        <div class="chat-frame" id="n8n-chat-embed">
+          <iframe id="chat-iframe" title="TeamSync AI chat" allow="microphone clipboard-read clipboard-write"></iframe>
+          <div class="chat-fallback" id="chat-fallback">
+            <div class="chat-fallback-inner">
+              <h3 id="fallback-title">Chat widget not configured yet</h3>
+              <p id="fallback-copy">
+                Set <code>N8N_CHAT_URL</code> in the container environment or update <code>config.js</code> if you are serving this page without Docker.
+              </p>
+              <div class="chat-fallback-actions">
+                <a class="button button-primary" href="#" id="fallback-direct-link" target="_blank" rel="noreferrer">Open direct chat</a>
+                <a class="button button-secondary" href="DEMO_GUIDE.md" target="_blank" rel="noreferrer">Read setup guide</a>
+              </div>
+              <p class="micro-note">Embedding may be blocked by the upstream chat page. Direct-link fallback is expected and supported.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div id="footer-copy">TeamSync AI public review build for PRD automation.</div>
+      <div>Serve this page with Docker, point it at an active n8n chat webhook, and review the end-to-end experience with the linked datasets.</div>
+    </footer>
+  </main>
+
+  <!-- Local config panel — shown when URL not configured via Docker/config.js -->
+  <div class="config-overlay" id="config-overlay" role="dialog" aria-modal="true" aria-labelledby="config-panel-title">
+    <div class="config-panel">
+      <button class="config-close" id="config-close-button" aria-label="Close">&times;</button>
+      <h2 id="config-panel-title">Connect to n8n</h2>
+      <p>
+        Enter the full URL of your n8n chat webhook. This is saved to your browser's local storage so you only need to do this once per device.
+      </p>
+      <div class="config-field">
+        <label for="config-url-input">n8n Chat Webhook URL</label>
+        <input
+          type="text"
+          id="config-url-input"
+          placeholder="http://localhost:5678/webhook/unified-webhook-id/chat"
+          autocomplete="url"
+          spellcheck="false"
+        />
+        <p class="config-hint">
+          Default local URL: <code>http://localhost:5678/webhook/unified-webhook-id/chat</code><br>
+          Find the exact URL in the n8n Chat Trigger node after activating the workflow.<br>
+          Or pass <code>?url=&lt;your-url&gt;</code> in the page URL to skip this form.
+        </p>
+      </div>
+      <div class="config-actions">
+        <button class="button button-primary" id="config-save-button" type="button">Save &amp; Connect</button>
+        <button class="button button-secondary" id="config-clear-button" type="button">Clear saved URL</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.js"></script>
+  <script>
+    // ── URL resolution priority ────────────────────────────────────────────
+    // 1. Docker / server-injected config.js  (window.__TEAMSYNC_CONFIG__)
+    // 2. URL query param                      (?url=...)
+    // 3. localStorage                         (ts_chat_url)
+    // 4. Not configured                       → show config panel
+
+    const config = window.__TEAMSYNC_CONFIG__ || {};
+
+    const queryUrl = new URLSearchParams(window.location.search).get("url") || "";
+    const storedUrl = localStorage.getItem("ts_chat_url") || "";
+    const configuredUrl = (
+      (config.N8N_CHAT_URL || "").trim() ||
+      queryUrl.trim() ||
+      storedUrl.trim()
+    );
+    const title = (config.DEMO_TITLE || "TeamSync AI").trim();
+    const badge = (config.DEMO_BADGE || "Public Review Build").trim();
+
+    const brandTitle = document.getElementById("brand-title");
+    const reviewBadge = document.getElementById("review-badge");
+    const configPill = document.getElementById("config-pill");
+    const endpointLabel = document.getElementById("endpoint-label");
+    const endpointCode = document.getElementById("endpoint-code");
+    const directLink = document.getElementById("direct-chat-link");
+    const fallbackDirectLink = document.getElementById("fallback-direct-link");
+    const openChatLink = document.getElementById("open-chat-link");
+    const chatStatusText = document.getElementById("chat-status-text");
+    const fallbackTitle = document.getElementById("fallback-title");
+    const fallbackCopy = document.getElementById("fallback-copy");
+    const iframe = document.getElementById("chat-iframe");
+    const fallback = document.getElementById("chat-fallback");
+    const retryEmbedButton = document.getElementById("retry-embed-button");
+
+    document.title = title + " | PRD Automation Demo";
+    brandTitle.textContent = title;
+    reviewBadge.textContent = badge;
+    document.getElementById("footer-copy").textContent = title + " public review build for PRD automation.";
+
+    function showFallback(titleText, copyText, allowLink) {
+      fallback.style.display = "grid";
+      iframe.style.display = "none";
+      fallbackTitle.textContent = titleText;
+      fallbackCopy.innerHTML = copyText;
+      fallbackDirectLink.style.pointerEvents = allowLink ? "auto" : "none";
+      fallbackDirectLink.style.opacity = allowLink ? "1" : "0.6";
+    }
+
+    function setConfiguredState(url) {
+      endpointLabel.textContent = "Runtime chat webhook";
+      endpointCode.textContent = url;
+      configPill.textContent = "Chat endpoint configured";
+      configPill.className = "pill pill-success";
+      chatStatusText.textContent = "Embedded chat is attempting to load from the configured n8n webhook.";
+      directLink.href = url;
+      fallbackDirectLink.href = url;
+      openChatLink.href = url;
+      openChatLink.target = "_blank";
+    }
+
+    function setUnconfiguredState() {
+      endpointLabel.textContent = "Configuration required";
+      endpointCode.textContent = "Click Configure (top right) or add ?url=<webhook-url> to the page URL.";
+      directLink.href = "#";
+      fallbackDirectLink.href = "#";
+      chatStatusText.textContent = "No chat endpoint is configured yet.";
+      showFallback(
+        "Chat endpoint not configured",
+        "Click <strong>Configure</strong> in the top bar and enter your n8n webhook URL. " +
+        "Or append <code>?url=http://localhost:5678/webhook/unified-webhook-id/chat</code> to the page URL. " +
+        "No Docker required for local testing.",
+        false
+      );
+    }
+
+    let embedTimeoutId = null;
+
+    function loadChatFrame() {
+      if (!configuredUrl) {
+        setUnconfiguredState();
+        return;
+      }
+
+      setConfiguredState(configuredUrl);
+      fallback.style.display = "grid";
+      iframe.style.display = "none";
+
+      if (embedTimeoutId) {
+        clearTimeout(embedTimeoutId);
+      }
+
+      iframe.src = configuredUrl;
+      embedTimeoutId = window.setTimeout(() => {
+        showFallback(
+          "Embed fallback in use",
+          "The upstream chat page did not finish loading inside an iframe. This is often caused by iframe security headers. Use the direct-link option to continue the review.",
+          true
+        );
+      }, 4500);
+    }
+
+    iframe.addEventListener("load", () => {
+      if (embedTimeoutId) {
+        clearTimeout(embedTimeoutId);
+      }
+      iframe.style.display = "block";
+      fallback.style.display = "none";
+      chatStatusText.textContent = "Embedded chat loaded successfully.";
+    });
+
+    iframe.addEventListener("error", () => {
+      if (embedTimeoutId) {
+        clearTimeout(embedTimeoutId);
+      }
+      showFallback(
+        "Unable to embed chat",
+        "The chat endpoint could not be rendered in-frame. Open the direct link to keep testing the live workflow.",
+        true
+      );
+    });
+
+    retryEmbedButton.addEventListener("click", () => {
+      iframe.src = "about:blank";
+      loadChatFrame();
+    });
+
+    document.querySelectorAll("[data-copy-target]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const targetId = button.getAttribute("data-copy-target");
+        const target = document.getElementById(targetId);
+        if (!target) return;
+
+        try {
+          await navigator.clipboard.writeText(target.value);
+          const original = button.textContent;
+          button.textContent = "Copied";
+          setTimeout(() => {
+            button.textContent = original;
+          }, 1400);
+        } catch (error) {
+          const original = button.textContent;
+          button.textContent = "Copy failed";
+          setTimeout(() => {
+            button.textContent = original;
+          }, 1400);
+        }
+      });
+    });
+
+    loadChatFrame();
+
+    // ── Config panel wiring ───────────────────────────────────────────────
+    const configOverlay = document.getElementById("config-overlay");
+    const configUrlInput = document.getElementById("config-url-input");
+    const configSaveButton = document.getElementById("config-save-button");
+    const configClearButton = document.getElementById("config-clear-button");
+    const configCloseButton = document.getElementById("config-close-button");
+    const openConfigButton = document.getElementById("open-config-button");
+
+    function openConfigPanel() {
+      configUrlInput.value = configuredUrl || "";
+      configOverlay.classList.add("open");
+      configUrlInput.focus();
+    }
+
+    function closeConfigPanel() {
+      configOverlay.classList.remove("open");
+    }
+
+    openConfigButton.addEventListener("click", openConfigPanel);
+    configCloseButton.addEventListener("click", closeConfigPanel);
+
+    configOverlay.addEventListener("click", (e) => {
+      if (e.target === configOverlay) closeConfigPanel();
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeConfigPanel();
+    });
+
+    configSaveButton.addEventListener("click", () => {
+      const newUrl = configUrlInput.value.trim();
+      if (!newUrl) {
+        configUrlInput.focus();
+        return;
+      }
+      localStorage.setItem("ts_chat_url", newUrl);
+      closeConfigPanel();
+      // Reload so new URL takes effect in configuredUrl resolution
+      window.location.reload();
+    });
+
+    configUrlInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") configSaveButton.click();
+    });
+
+    configClearButton.addEventListener("click", () => {
+      localStorage.removeItem("ts_chat_url");
+      configUrlInput.value = "";
+      closeConfigPanel();
+      window.location.reload();
+    });
+
+    // Auto-open config panel if nothing is configured and no Docker config
+    if (!configuredUrl && !config.N8N_CHAT_URL) {
+      setTimeout(openConfigPanel, 800);
+    }
+  </script>
+</body>
+</html>
