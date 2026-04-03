@@ -313,25 +313,113 @@ def validate(state: PRDState) -> dict:
     }
 
 
-# ── Phase 2 node stubs ────────────────────────────────────────────────────────
-# These are imported by graph.py so the graph compiles; they will be filled in
-# Phase 2. For now they immediately pass through.
+# ── Node: email_interrupt ─────────────────────────────────────────────────────
 
 def email_interrupt(state: PRDState) -> dict:          # noqa: ARG001
-    """Phase 2: suspend execution and wait for the user to submit email form."""
-    raise NotImplementedError("email_interrupt is implemented in Phase 2")
+    """
+    Suspend execution and wait for the user to submit their email details.
+    The value passed to interrupt() is returned by the resume Command.
+    """
+    from langgraph.types import interrupt
+    form_data = interrupt({
+        "form":    "email_form",
+        "message": "Your PRD is ready! Enter your details to receive it by email.",
+        "fields":  ["name", "email"],
+        "score":   state.get("quality_score", 0),
+        "grade":   state.get("grade", ""),
+    })
+    return {
+        "recipient_name":  form_data.get("name", "").strip(),
+        "recipient_email": form_data.get("email", "").strip(),
+    }
 
 
-def send_email(state: PRDState) -> dict:               # noqa: ARG001
-    """Phase 2: send PRD as email attachment via Gmail API."""
-    raise NotImplementedError("send_email is implemented in Phase 2")
+# ── Node: send_email ──────────────────────────────────────────────────────────
 
+async def send_email(state: PRDState) -> dict:
+    """Send the PRD as a markdown attachment via Gmail SMTP."""
+    from src.services.email import send_prd_email
+    writer = get_stream_writer()
+    writer({"type": "status", "message": f"Sending PRD to {state['recipient_email']}…"})
+
+    await send_prd_email(
+        recipient_name=state["recipient_name"],
+        recipient_email=state["recipient_email"],
+        prd_markdown=state["prd_markdown"],
+        file_name=state["file_name"],
+        quality_score=state["quality_score"],
+        grade=state["grade"],
+    )
+
+    writer({"type": "email_sent", "recipient": state["recipient_email"]})
+    return {}
+
+
+# ── Node: jira_interrupt ──────────────────────────────────────────────────────
 
 def jira_interrupt(state: PRDState) -> dict:           # noqa: ARG001
-    """Phase 2: suspend execution and wait for JIRA approval form."""
-    raise NotImplementedError("jira_interrupt is implemented in Phase 2")
+    """
+    Suspend execution and wait for the reviewer to approve JIRA ticket creation.
+    The form collects: decision (approve/skip), assignee email, optional notes.
+    """
+    from langgraph.types import interrupt
+    form_data = interrupt({
+        "form":    "jira_form",
+        "message": "Review the PRD and approve JIRA ticket creation.",
+        "fields":  ["decision", "assignee_email", "notes"],
+        "hint":    "Type 'approve' to create tickets or 'skip' to finish without JIRA.",
+    })
+    return {
+        "jira_decision":        form_data.get("decision", "skip").lower().strip(),
+        "jira_assignee_email":  form_data.get("assignee_email", "").strip(),
+        "jira_notes":           form_data.get("notes", "").strip(),
+    }
 
 
-def create_jira(state: PRDState) -> dict:              # noqa: ARG001
-    """Phase 2: create Epic + Tasks + Subtasks via JIRA REST API."""
-    raise NotImplementedError("create_jira is implemented in Phase 2")
+# ── Node: create_jira ─────────────────────────────────────────────────────────
+
+async def create_jira(state: PRDState) -> dict:
+    """
+    Create Epic → Stories → Subtasks in JIRA, then send a notification email
+    to the assignee with direct ticket links.
+    """
+    from src.services.jira import JiraService
+    from src.services.email import send_jira_notification
+    writer = get_stream_writer()
+
+    writer({"type": "status", "message": "Creating JIRA tickets…"})
+
+    svc = JiraService()
+    result = await svc.create_from_prd(
+        prd_markdown=state["prd_markdown"],
+        feature_name=state.get("file_name", "PRD Feature").replace("_", " "),
+        assignee_email=state.get("jira_assignee_email", ""),
+    )
+
+    writer({
+        "type":      "jira_created",
+        "epic_key":  result["epic_key"],
+        "epic_url":  result["epic_url"],
+        "task_keys": result["task_keys"],
+    })
+
+    # Send notification email to assignee
+    if state.get("jira_assignee_email"):
+        writer({"type": "status", "message": "Sending JIRA notification email…"})
+        await send_jira_notification(
+            assignee_email=state["jira_assignee_email"],
+            assignee_name=result.get("assignee_name", ""),
+            epic_key=result["epic_key"],
+            epic_url=result["epic_url"],
+            task_keys=result["task_keys"],
+            project_key=state.get("jira_project_key", ""),
+            prd_title=result["epic_key"],
+            notes=state.get("jira_notes", ""),
+        )
+        writer({"type": "notification_sent", "to": state["jira_assignee_email"]})
+
+    return {
+        "epic_key":  result["epic_key"],
+        "epic_url":  result["epic_url"],
+        "task_keys": result["task_keys"],
+    }

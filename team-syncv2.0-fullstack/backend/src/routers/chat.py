@@ -98,12 +98,20 @@ async def _stream_graph(
             config=thread_config,
             stream_mode="custom",
         ):
-            # chunk is whatever the node wrote via get_stream_writer()
             if isinstance(chunk, dict):
                 yield _sse(chunk)
 
+        # After stream ends check if graph suspended at an interrupt node
+        snapshot = await graph.aget_state(thread_config)
+        if snapshot.tasks:
+            for task in snapshot.tasks:
+                if hasattr(task, "interrupts") and task.interrupts:
+                    # Forward the interrupt payload so the frontend knows which form to show
+                    yield _sse({"type": "interrupt", **task.interrupts[0].value})
+                    break
+
     except Exception as exc:
-        logger.exception("Graph execution error session=%s: %s", session_id, exc)
+        logger.exception("Graph error session=%s: %s", session_id, exc)
         yield _sse({"type": "error", "message": "Something went wrong. Please try again."})
 
     finally:

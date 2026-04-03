@@ -15,8 +15,16 @@ import logging
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from src.graph.edges import route_after_analyze, route_entry
-from src.graph.nodes import analyze, generate_prd, validate
+from src.graph.edges import route_after_analyze, route_after_jira, route_entry
+from src.graph.nodes import (
+    analyze,
+    create_jira,
+    email_interrupt,
+    generate_prd,
+    jira_interrupt,
+    send_email,
+    validate,
+)
 from src.graph.state import PRDState
 
 logger = logging.getLogger(__name__)
@@ -37,36 +45,44 @@ def build_graph(checkpointer=None):
     builder = StateGraph(PRDState)
 
     # ── Nodes ─────────────────────────────────────────────────
-    builder.add_node("analyze",      analyze)
-    builder.add_node("generate_prd", generate_prd)
-    builder.add_node("validate",     validate)
+    builder.add_node("analyze",         analyze)
+    builder.add_node("generate_prd",    generate_prd)
+    builder.add_node("validate",        validate)
+    builder.add_node("email_interrupt", email_interrupt)
+    builder.add_node("send_email",      send_email)
+    builder.add_node("jira_interrupt",  jira_interrupt)
+    builder.add_node("create_jira",     create_jira)
 
     # ── Edges ─────────────────────────────────────────────────
-    # Entry: route based on current mode in state
     builder.add_conditional_edges(
         START,
         route_entry,
         {"analyze": "analyze", "generate_prd": "generate_prd"},
     )
 
-    # After analyze: either keep chatting (END) or kick off PRD generation
     builder.add_conditional_edges(
         "analyze",
         route_after_analyze,
         {"generate_prd": "generate_prd", END: END},
     )
 
-    # generate_prd always flows into validate
-    builder.add_edge("generate_prd", "validate")
+    builder.add_edge("generate_prd",    "validate")
+    builder.add_edge("validate",        "email_interrupt")   # HITL 1: email form
+    builder.add_edge("email_interrupt", "send_email")
+    builder.add_edge("send_email",      "jira_interrupt")    # HITL 2: JIRA approval
 
-    # validate → END for Phase 1
-    # Phase 2: change this to "email_interrupt"
-    builder.add_edge("validate", END)
+    builder.add_conditional_edges(
+        "jira_interrupt",
+        route_after_jira,
+        {"create_jira": "create_jira", END: END},
+    )
+
+    builder.add_edge("create_jira", END)
 
     resolved_checkpointer = checkpointer if checkpointer is not None else MemorySaver()
     graph = builder.compile(checkpointer=resolved_checkpointer)
 
-    logger.info("LangGraph PRD workflow compiled (Phase 1)")
+    logger.info("LangGraph PRD workflow compiled (Phase 2)")
     return graph
 
 
@@ -83,4 +99,9 @@ def get_default_state() -> PRDState:
         recipient_email="",
         recipient_name="",
         jira_decision="",
+        jira_assignee_email="",
+        jira_notes="",
+        epic_key="",
+        epic_url="",
+        task_keys=[],
     )

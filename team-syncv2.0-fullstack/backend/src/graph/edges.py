@@ -28,6 +28,14 @@ def route_entry(state: PRDState) -> Literal["analyze", "generate_prd"]:
     return "analyze"
 
 
+def route_after_jira(state: PRDState) -> Literal["create_jira", "__end__"]:
+    """
+    After jira_interrupt: if the user typed 'approve', create tickets.
+    Anything else (skip, empty, etc.) ends the workflow cleanly.
+    """
+    return "create_jira" if state.get("jira_decision", "").lower() == "approve" else END
+
+
 def route_after_analyze(state: PRDState) -> Literal["generate_prd", "__end__"]:
     """
     After analyze runs, check whether it detected the GENERATE_PRD signal.

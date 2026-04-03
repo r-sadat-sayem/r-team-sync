@@ -32,9 +32,16 @@ class PRDState(TypedDict):
     grade: str
     file_name: str
 
-    # Set by the email HITL gate (Phase 2).
+    # Set by the email HITL gate.
     recipient_email: str
     recipient_name: str
 
-    # Set by the JIRA HITL gate (Phase 2).
-    jira_decision: str   # "approve" | "skip"
+    # Set by the JIRA HITL gate.
+    jira_decision: str          # "approve" | "skip"
+    jira_assignee_email: str    # entered by user in JIRA approval form
+    jira_notes: str             # optional reviewer notes
+
+    # Set by create_jira node.
+    epic_key: str
+    epic_url: str
+    task_keys: Annotated[list[str], _append]
