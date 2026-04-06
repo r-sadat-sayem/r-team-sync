@@ -4,8 +4,9 @@
 langgraph>=0.2.28
 langgraph-checkpoint-postgres>=2.0.0
 
-# Anthropic SDK (Rakuten AI Gateway)
-anthropic>=0.40.0
+# AI SDKs (Rakuten AI Gateway)
+anthropic>=0.40.0          # kept for ai_service direct calls
+langchain-anthropic>=0.3.0 # ChatAnthropic — used in graph nodes
 
 # API server
 fastapi>=0.115.6

@@ -37,33 +37,37 @@ async def query(body: AIRequest) -> AIResponse:
     model = body.model or settings.rakuten_anthropic_model
 
     if provider == "rakuten_claude":
-        client = AsyncAnthropic(
-            base_url=settings.rakuten_anthropic_base_url,
-            auth_token=settings.rakuten_ai_gateway_key,
+        from langchain_anthropic import ChatAnthropic
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        lc_model = ChatAnthropic(
+            model_name=model,
+            temperature=0.7,
+            max_tokens=body.max_tokens,
+            anthropic_api_url=settings.rakuten_anthropic_base_url,
+            anthropic_api_key="test",
+            default_headers={"Authorization": f"Bearer {settings.rakuten_ai_gateway_key}"},
         )
-        kwargs = {
-            "model": model,
-            "max_tokens": body.max_tokens,
-            "messages": [{"role": "user", "content": body.prompt}],
-        }
+
+        msgs = []
         if body.system:
-            kwargs["system"] = body.system
-        if body.web_search:
-            kwargs["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+            msgs.append(SystemMessage(content=body.system))
+        msgs.append(HumanMessage(content=body.prompt))
 
         try:
-            resp = await client.messages.create(**kwargs)
+            resp = await lc_model.ainvoke(msgs)
         except Exception as exc:
             logger.error("Rakuten Claude error: %s", exc)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
 
-        text = "".join(b.text for b in resp.content if hasattr(b, "text"))
+        content = resp.content if isinstance(resp.content, str) else str(resp.content)
+        usage   = resp.usage_metadata or {}
         return AIResponse(
-            content=text,
+            content=content,
             provider="rakuten_claude",
-            model=resp.model,
-            input_tokens=resp.usage.input_tokens,
-            output_tokens=resp.usage.output_tokens,
+            model=model,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
         )
 
     raise HTTPException(

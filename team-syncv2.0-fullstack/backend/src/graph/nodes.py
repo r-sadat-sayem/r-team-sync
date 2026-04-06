@@ -14,7 +14,8 @@ import logging
 import re
 from datetime import date
 
-from anthropic import AsyncAnthropic
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
@@ -153,11 +154,50 @@ RULES:
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def _make_client() -> AsyncAnthropic:
-    return AsyncAnthropic(
-        base_url=settings.rakuten_anthropic_base_url,
-        auth_token=settings.rakuten_ai_gateway_key,
+def _make_model(max_tokens: int = 2048, temperature: float = 0.7) -> ChatAnthropic:
+    """
+    Build a ChatAnthropic instance pointed at the Rakuten AI Gateway.
+
+    Auth pattern (from Rakuten docs):
+      - anthropic_api_key="test"  — required by the LangChain client init but
+                                    NOT sent to Rakuten; the real auth is the header below.
+      - Authorization: Bearer {key} — actual Rakuten gateway credential.
+    """
+    return ChatAnthropic(
+        model_name=settings.rakuten_anthropic_model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        anthropic_api_url=settings.rakuten_anthropic_base_url,
+        anthropic_api_key="test",
+        default_headers={"Authorization": f"Bearer {settings.rakuten_ai_gateway_key}"},
+        streaming=True,
     )
+
+
+def _to_lc_messages(dicts: list[dict], system: str) -> list:
+    """Convert our plain-dict message history to LangChain message objects."""
+    msgs: list = [SystemMessage(content=system)]
+    for d in dicts:
+        if d["role"] == "user":
+            msgs.append(HumanMessage(content=d["content"]))
+        else:
+            msgs.append(AIMessage(content=d["content"]))
+    return msgs
+
+
+def _extract_chunk_text(chunk) -> str:
+    """Pull text out of a LangChain streaming chunk (handles str or list content)."""
+    c = chunk.content
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        return "".join(
+            item if isinstance(item, str)
+            else item.get("text", "") if isinstance(item, dict)
+            else ""
+            for item in c
+        )
+    return ""
 
 
 def _extract_context_summary(text: str) -> str:
@@ -211,19 +251,16 @@ async def analyze(state: PRDState) -> dict:
     Sam asks requirements questions.
     Returns updated messages + transitions mode to "generate" when ready.
     """
-    writer  = get_stream_writer()
-    client  = _make_client()
+    writer   = get_stream_writer()
+    model    = _make_model(max_tokens=1024, temperature=0.7)
+    lc_msgs  = _to_lc_messages(state["messages"], SAM_SYSTEM)
 
     full_text = ""
-    async with client.messages.stream(
-        model=settings.rakuten_anthropic_model,
-        max_tokens=1024,
-        system=SAM_SYSTEM,
-        messages=state["messages"],
-    ) as stream:
-        async for chunk in stream.text_stream:
-            full_text += chunk
-            writer({"type": "token", "content": chunk})
+    async for chunk in model.astream(lc_msgs):
+        text = _extract_chunk_text(chunk)
+        if text:
+            full_text += text
+            writer({"type": "token", "content": text})
 
     logger.debug("analyze: response length=%d", len(full_text))
 
@@ -252,25 +289,25 @@ async def generate_prd(state: PRDState) -> dict:
     Uses context_summary stored in state — no user message needed.
     """
     writer  = get_stream_writer()
-    client  = _make_client()
+    model   = _make_model(max_tokens=8192, temperature=0.3)
 
     writer({"type": "status", "message": "Writing PRD document..."})
 
-    prompt = (
+    prompt  = (
         "Generate a comprehensive PRD using this requirements context:\n\n"
         + state.get("context_summary", "")
     )
+    lc_msgs = _to_lc_messages(
+        [{"role": "user", "content": prompt}],
+        DEVBRIDGE_SYSTEM,
+    )
 
     full_text = ""
-    async with client.messages.stream(
-        model=settings.rakuten_anthropic_model,
-        max_tokens=8192,
-        system=DEVBRIDGE_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        async for chunk in stream.text_stream:
-            full_text += chunk
-            writer({"type": "token", "content": chunk})
+    async for chunk in model.astream(lc_msgs):
+        text = _extract_chunk_text(chunk)
+        if text:
+            full_text += text
+            writer({"type": "token", "content": text})
 
     logger.info("generate_prd: generated %d chars", len(full_text))
 
