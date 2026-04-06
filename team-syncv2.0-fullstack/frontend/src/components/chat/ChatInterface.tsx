@@ -105,6 +105,7 @@ export function ChatInterface() {
           sections: parseSections(markdown),
           testCaseCount: countTC(markdown),
           fileName: ev.file_name,
+          sessionId: state.sessionId ?? undefined,
         };
         dispatch({ type: 'SET_CURRENT_PRD', payload: prd });
         dispatch({ type: 'ADD_PRD_TO_HISTORY', payload: prd });

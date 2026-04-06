@@ -22,6 +22,7 @@ export interface PRDDocument {
   sections: PRDSection[];
   testCaseCount: number;
   fileName?: string;
+  sessionId?: string;   // LangGraph thread_id — lets History link back to the session
 }
 
 export interface PRDSection {

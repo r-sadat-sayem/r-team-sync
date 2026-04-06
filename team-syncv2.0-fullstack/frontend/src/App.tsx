@@ -8,6 +8,7 @@ import { PRDViewer } from './components/prd/PRDViewer';
 import { EmailForm } from './components/email/EmailForm';
 import { JIRATicketViewer } from './components/jira/JIRATicketViewer';
 import { Dashboard } from './components/dashboard/Dashboard';
+import { History } from './components/history/History';
 import './styles/globals.css';
 
 function App() {
@@ -18,6 +19,7 @@ function App() {
           <Routes>
             <Route path="/" element={<ChatInterface />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/history" element={<History />} />
             <Route path="/prd" element={<PRDViewer />} />
             <Route path="/prd/:id" element={<PRDViewer />} />
             <Route path="/email" element={<EmailForm />} />
