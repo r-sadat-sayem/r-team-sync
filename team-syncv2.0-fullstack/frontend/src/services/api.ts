@@ -66,6 +66,25 @@ class TeamSyncAPI {
     yield* readSSE(res);
   }
 
+  // Gmail OAuth
+  async getGmailConnectUrl(sessionId: string): Promise<string> {
+    const res = await fetch(
+      `${API_URL}/api/v1/email/auth/connect?session_id=${encodeURIComponent(sessionId)}`,
+      { headers: BASE_HEADERS },
+    );
+    if (!res.ok) throw new Error('Failed to get Gmail connect URL');
+    return (await res.json()).url as string;
+  }
+
+  async getGmailAuthStatus(sessionId: string): Promise<{ connected: boolean; email: string | null; name: string | null }> {
+    const res = await fetch(
+      `${API_URL}/api/v1/email/auth/status?session_id=${encodeURIComponent(sessionId)}`,
+      { headers: BASE_HEADERS },
+    );
+    if (!res.ok) throw new Error('Failed to get Gmail status');
+    return res.json();
+  }
+
   // Get JIRA OAuth connect URL — opens in a popup tab.
   async getJiraConnectUrl(sessionId: string): Promise<string> {
     const res = await fetch(

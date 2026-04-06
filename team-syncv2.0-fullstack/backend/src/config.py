@@ -25,7 +25,14 @@ class Settings(BaseSettings):
     rakuten_anthropic_base_url: str = "https://api.ai.public.rakuten-it.com/anthropic/"
     rakuten_anthropic_model: str = "claude-3-7-sonnet-20250219"
 
-    # Gmail SMTP (App Password)
+    # Gmail OAuth 2.0 (preferred — user logs in via popup)
+    # Setup: console.cloud.google.com → Enable Gmail API → OAuth 2.0 Client ID (Web)
+    # Callback URL: http://localhost:8000/api/v1/email/auth/callback
+    # Scopes: gmail.send + userinfo.email
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # Gmail SMTP App Password (fallback — used when no OAuth token)
     gmail_sender: str = ""          # e.g. yourname@gmail.com
     gmail_app_password: str = ""    # Google Account → Security → App passwords
 

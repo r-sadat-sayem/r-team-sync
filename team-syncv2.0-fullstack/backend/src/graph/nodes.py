@@ -353,18 +353,29 @@ def validate(state: PRDState) -> dict:
 
 # ── Node: email_interrupt ─────────────────────────────────────────────────────
 
-def email_interrupt(state: PRDState) -> dict:          # noqa: ARG001
+def email_interrupt(state: PRDState, config: RunnableConfig) -> dict:
     """
     Suspend execution and wait for the user to submit their email details.
-    The value passed to interrupt() is returned by the resume Command.
+    Includes Gmail connection status so the frontend can show "Connect Gmail"
+    if the user hasn't authenticated yet.
     """
     from langgraph.types import interrupt
+    from src.routers.email_auth import get_gmail_token
+
+    session_id  = config["configurable"].get("thread_id", "")
+    token       = get_gmail_token(session_id)
+    connected   = token is not None
+    connect_url = f"/api/v1/email/auth/connect?session_id={session_id}"
+
     form_data = interrupt({
-        "form":    "email_form",
-        "message": "Your PRD is ready! Enter your details to receive it by email.",
-        "fields":  ["name", "email"],
-        "score":   state.get("quality_score", 0),
-        "grade":   state.get("grade", ""),
+        "form":              "email_form",
+        "message":           "Your PRD is ready! Connect Gmail or enter details below.",
+        "fields":            ["name", "email"],
+        "score":             state.get("quality_score", 0),
+        "grade":             state.get("grade", ""),
+        "gmail_connected":   connected,
+        "gmail_user":        token["email"] if connected else None,
+        "connect_url":       None if connected else connect_url,
     })
     return {
         "recipient_name":  form_data.get("name", "").strip(),
@@ -374,10 +385,15 @@ def email_interrupt(state: PRDState) -> dict:          # noqa: ARG001
 
 # ── Node: send_email ──────────────────────────────────────────────────────────
 
-async def send_email(state: PRDState) -> dict:
-    """Send the PRD as a markdown attachment via Gmail SMTP."""
+async def send_email(state: PRDState, config: RunnableConfig) -> dict:
+    """Send the PRD via Gmail API (OAuth) or SMTP fallback."""
     from src.services.email import send_prd_email
-    writer = get_stream_writer()
+    from src.routers.email_auth import get_gmail_token
+
+    writer     = get_stream_writer()
+    session_id = config["configurable"].get("thread_id", "")
+    token      = get_gmail_token(session_id)
+
     writer({"type": "status", "message": f"Sending PRD to {state['recipient_email']}…"})
 
     await send_prd_email(
@@ -387,6 +403,8 @@ async def send_email(state: PRDState) -> dict:
         file_name=state["file_name"],
         quality_score=state["quality_score"],
         grade=state["grade"],
+        access_token=token["access_token"] if token else None,
+        sender_email=token["email"] if token else None,
     )
 
     writer({"type": "email_sent", "recipient": state["recipient_email"]})
@@ -460,6 +478,8 @@ async def create_jira(state: PRDState, config: RunnableConfig) -> dict:
 
     # Send notification email to assignee
     if state.get("jira_assignee_email"):
+        from src.routers.email_auth import get_gmail_token
+        email_token = get_gmail_token(session_id)
         writer({"type": "status", "message": "Sending JIRA notification email…"})
         await send_jira_notification(
             assignee_email=state["jira_assignee_email"],
@@ -470,6 +490,8 @@ async def create_jira(state: PRDState, config: RunnableConfig) -> dict:
             project_key=state.get("jira_project_key", ""),
             prd_title=result["epic_key"],
             notes=state.get("jira_notes", ""),
+            access_token=email_token["access_token"] if email_token else None,
+            sender_email=email_token["email"] if email_token else None,
         )
         writer({"type": "notification_sent", "to": state["jira_assignee_email"]})
 

@@ -90,6 +90,8 @@ export interface InterruptPayload {
   // email_form
   score?: number;
   grade?: string;
+  gmail_connected?: boolean;
+  gmail_user?: string | null;
   // jira_form
   hint?: string;
   jira_connected?: boolean;

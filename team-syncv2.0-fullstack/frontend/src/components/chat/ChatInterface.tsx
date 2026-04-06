@@ -327,15 +327,14 @@ export function ChatInterface() {
         )}
 
         {/* Inline email form */}
-        {state.interrupt?.form === 'email_form' && (
+        {state.interrupt?.form === 'email_form' && state.sessionId && (
           <div className="flex gap-4">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary-light flex items-center justify-center flex-shrink-0">
               <Bot className="w-5 h-5 text-white" />
             </div>
             <InlineEmailForm
-              message={state.interrupt.message}
-              score={state.interrupt.score}
-              grade={state.interrupt.grade}
+              interrupt={state.interrupt}
+              sessionId={state.sessionId}
               isLoading={state.isTyping}
               onSubmit={handleEmailSubmit}
             />

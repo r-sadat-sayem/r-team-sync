@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.routers import ai, chat, jira_auth, sessions
+from src.routers import ai, chat, email_auth, jira_auth, sessions
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -71,6 +71,7 @@ app.include_router(chat.router)
 app.include_router(sessions.router)
 app.include_router(ai.router)
 app.include_router(jira_auth.router)
+app.include_router(email_auth.router)
 
 
 @app.get("/health", tags=["Health"])
