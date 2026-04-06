@@ -39,15 +39,19 @@ services:
       postgres:
         condition: service_healthy
 
-  # Frontend — uncomment when ready to wire up React/Vite
-  # frontend:
-  #   build:
-  #     context: ../frontend
-  #   ports:
-  #     - "5173:5173"
-  #   environment:
-  #     VITE_API_URL: http://localhost:8000
-  #     VITE_API_KEY: dev-change-me
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../frontend:/app
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_API_KEY: dev-change-me
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:
