@@ -1,0 +1,14 @@
+services:
+  teamsync-demo:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    ports:
+      - "4040:4040"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      N8N_CHAT_URL: /webhook/unified-webhook-id/chat
+      N8N_UPSTREAM_BASE: http://host.docker.internal:5678
+      DEMO_TITLE: TeamSync AI
+      DEMO_BADGE: Public Review Build

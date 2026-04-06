@@ -1,0 +1,83 @@
+┌─────────────────────────────────────────────────────────────┐
+│                    OPTIMIZED PRD SYSTEM v2.0                 │
+└─────────────────────────────────────────────────────────────┘
+
+			    USER INPUT
+				│
+				▼
+			┌─────────────────┐
+			│  Chat Trigger   │  Receives user message
+			└────────┬────────┘
+			         │
+			         ▼
+			┌─────────────────┐
+			│ Prepare Input   │  Clean & validate input
+			└────────┬────────┘  Set initial mode: 'analyze'
+			         │
+			         ▼
+	┌──────────────────────────────────────────────┐
+	│   Build Dynamic System Prompt                │
+	│   ┌────────────────────────────────────┐     │
+	│   │ IF mode = 'analyze':               │     │
+	│   │   → Requirements Gathering Prompt  │     │
+	│   │ IF mode = 'generate':              │     │
+	│   │   → PRD Generation Prompt          │     │
+	│   └────────────────────────────────────┘     │
+	└─────────────────┬────────────────────────────┘
+	         	  │
+	         	  ▼
+┌────────────────────────────────────────────────┐
+│          UNIFIED PRD AGENT                     │
+│  ┌──────────────────────────────────────────┐ │
+│  │   Single Agent with Dynamic Behavior     │ │
+│  │                                          │ │
+│  │   Phase 1: Requirements Gathering        │ │
+│  │   - Ask questions conversationally       │ │
+│  │   - Store in shared memory               │ │
+│  │   - Signal when ready: "GENERATE_PRD:"   │ │
+│  │                                          │ │
+│  │   Phase 2: PRD Generation                │ │
+│  │   - Access full conversation memory      │ │
+│  │   - Generate complete PRD document       │ │
+│  │   - Output comprehensive markdown        │ │
+│  └──────────────────────────────────────────┘ │
+└────────┬───────────────────────────────────────┘
+         │
+         │  Connected to:
+         │  • Unified Memory (contextWindowLength: 20)
+         │  • Primary LLM (gpt-oss:20b-cloud)
+         │  • Fallback LLM (mistral:latest)
+         │
+         ▼
+┌─────────────────┐
+│ Parse Response  │  Detect agent mode & action
+└────────┬────────┘  
+         │
+         ▼
+┌─────────────────────────────────────┐
+│      Action Router (Switch)         │
+│  ┌───────────────────────────────┐  │
+│  │ action = 'continue'           │──┼──→ Continue Chat (NoOp)
+│  │   → Return to user            │  │       │
+│  │                               │  │       └→ User continues conversation
+│  │ action = 'generate'           │  │
+│  │   → User confirmed PRD        │──┼──→ Trigger PRD Generation
+│  │                               │  │       │
+│  │ action = 'done'               │  │       ▼
+│  │   → PRD completed             │──┼──→ [Loop back with mode='generate']
+│  └───────────────────────────────┘  │       │
+└─────────────────────────────────────┘       │
+                                               ▼
+                                      Validate PRD Quality
+                                               │
+                                               ▼
+                                      Convert to Binary
+                                               │
+                                               ▼
+                                      Email PRD Document
+                                               │
+                                               ▼
+                                      Format Success Message
+                                               │
+                                               ▼
+                                         Workflow Complete

@@ -34,7 +34,7 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://teamsync:teamsync@postgres:5432/teamsync
     volumes:
-      - ./backend/src:/app/src   # hot-reload
+      - ./backend/src:/app/src    # hot-reload
     depends_on:
       postgres:
         condition: service_healthy
@@ -46,7 +46,7 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ../frontend:/app
+      - ./frontend:/app
     environment:
       VITE_API_URL: http://localhost:8000
       VITE_API_KEY: dev-change-me

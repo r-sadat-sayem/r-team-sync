@@ -1,0 +1,12 @@
+.git
+.gitignore
+.DS_Store
+.claude
+.planning
+backend
+frontend
+team_sync_dev_v2.1_with_JIRA.json
+ArchitectureDiagram.txt
+BACKEND_PLAN.md
+FRONTEND_DESIGN.md
+AGENTS.md
