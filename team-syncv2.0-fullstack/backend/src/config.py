@@ -29,7 +29,14 @@ class Settings(BaseSettings):
     gmail_sender: str = ""          # e.g. yourname@gmail.com
     gmail_app_password: str = ""    # Google Account → Security → App passwords
 
-    # JIRA
+    # JIRA — OAuth 2.0 (preferred, user-level access)
+    # Setup: https://developer.atlassian.com/console/myapps/ → OAuth 2.0 app
+    # Callback URL: http://localhost:8000/api/v1/jira/auth/callback
+    # Scopes: read:jira-work  write:jira-work  offline_access
+    atlassian_client_id: str = ""
+    atlassian_client_secret: str = ""
+
+    # JIRA — API key fallback (service account, used when no OAuth token)
     jira_base_url: str = ""         # e.g. https://your-org.atlassian.net
     jira_email: str = ""
     jira_api_token: str = ""

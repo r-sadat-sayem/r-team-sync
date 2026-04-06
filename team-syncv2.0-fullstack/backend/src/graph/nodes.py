@@ -15,6 +15,7 @@ import re
 from datetime import date
 
 from anthropic import AsyncAnthropic
+from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 
 from src.config import settings
@@ -357,39 +358,56 @@ async def send_email(state: PRDState) -> dict:
 
 # ── Node: jira_interrupt ──────────────────────────────────────────────────────
 
-def jira_interrupt(state: PRDState) -> dict:           # noqa: ARG001
+def jira_interrupt(state: PRDState, config: RunnableConfig) -> dict:
     """
     Suspend execution and wait for the reviewer to approve JIRA ticket creation.
-    The form collects: decision (approve/skip), assignee email, optional notes.
+
+    The interrupt payload includes JIRA connection status so the frontend can
+    show a 'Connect JIRA' button if the user hasn't authenticated yet.
     """
     from langgraph.types import interrupt
+    from src.routers.jira_auth import get_token
+
+    session_id  = config["configurable"].get("thread_id", "")
+    token       = get_token(session_id)
+    connected   = token is not None
+    connect_url = f"/api/v1/jira/auth/connect?session_id={session_id}"
+
     form_data = interrupt({
-        "form":    "jira_form",
-        "message": "Review the PRD and approve JIRA ticket creation.",
-        "fields":  ["decision", "assignee_email", "notes"],
-        "hint":    "Type 'approve' to create tickets or 'skip' to finish without JIRA.",
+        "form":            "jira_form",
+        "message":         "Review the PRD and approve JIRA ticket creation.",
+        "fields":          ["decision", "assignee_email", "notes"],
+        "hint":            "Type 'approve' to create tickets or 'skip' to finish without JIRA.",
+        "jira_connected":  connected,
+        "jira_user":       token["user_name"] if connected else None,
+        "jira_cloud":      token["cloud_name"] if connected else None,
+        "connect_url":     None if connected else connect_url,
     })
     return {
-        "jira_decision":        form_data.get("decision", "skip").lower().strip(),
-        "jira_assignee_email":  form_data.get("assignee_email", "").strip(),
-        "jira_notes":           form_data.get("notes", "").strip(),
+        "jira_decision":       form_data.get("decision", "skip").lower().strip(),
+        "jira_assignee_email": form_data.get("assignee_email", "").strip(),
+        "jira_notes":          form_data.get("notes", "").strip(),
     }
 
 
 # ── Node: create_jira ─────────────────────────────────────────────────────────
 
-async def create_jira(state: PRDState) -> dict:
+async def create_jira(state: PRDState, config: RunnableConfig) -> dict:
     """
     Create Epic → Stories → Subtasks in JIRA, then send a notification email
     to the assignee with direct ticket links.
+
+    Uses the user's OAuth token if they connected via /api/v1/jira/auth/connect.
+    Falls back to the service-account API key from .env if not connected.
     """
     from src.services.jira import JiraService
     from src.services.email import send_jira_notification
     writer = get_stream_writer()
 
+    session_id = config["configurable"].get("thread_id", "")
     writer({"type": "status", "message": "Creating JIRA tickets…"})
 
-    svc = JiraService()
+    svc = JiraService.for_session(session_id)
     result = await svc.create_from_prd(
         prd_markdown=state["prd_markdown"],
         feature_name=state.get("file_name", "PRD Feature").replace("_", " "),
