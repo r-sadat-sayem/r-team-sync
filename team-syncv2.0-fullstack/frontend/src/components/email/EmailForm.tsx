@@ -10,7 +10,7 @@ import { Mail, Send, CheckCircle, AlertCircle, ChevronLeft } from 'lucide-react'
 
 export function EmailForm() {
   const navigate = useNavigate();
-  const { state, dispatch } = useApp();
+  const { dispatch, activeTab } = useApp();
   const [formData, setFormData] = useState({
     recipientName: '',
     recipientEmail: '',
@@ -39,7 +39,7 @@ export function EmailForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!validate() || !state.currentPRD) return;
+    if (!validate() || !activeTab.currentPRD) return;
     
     setIsSubmitting(true);
     dispatch({ type: 'SET_EMAIL_STATUS', payload: 'sending' });
@@ -100,13 +100,13 @@ export function EmailForm() {
         </CardHeader>
 
         <CardContent>
-          {state.currentPRD ? (
+          {activeTab.currentPRD ? (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="p-4 bg-background-tertiary rounded-lg border border-white/10">
                 <p className="text-sm text-text-secondary mb-1">Document</p>
-                <p className="font-medium text-text-primary">{state.currentPRD.title}</p>
+                <p className="font-medium text-text-primary">{activeTab.currentPRD.title}</p>
                 <p className="text-xs text-text-muted mt-1">
-                  {state.currentPRD.fileName || `${state.currentPRD.title.replace(/\s+/g, '_').toLowerCase()}.md`}
+                  {activeTab.currentPRD.fileName || `${activeTab.currentPRD.title.replace(/\s+/g, '_').toLowerCase()}.md`}
                 </p>
               </div>
 

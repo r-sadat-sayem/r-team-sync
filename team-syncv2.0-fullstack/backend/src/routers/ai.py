@@ -1,12 +1,14 @@
+from __future__ import annotations
+
 """POST /api/v1/ai/query — direct access to the Rakuten AI Gateway."""
 import logging
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from typing import Literal
 
 from src.config import settings
-from src.middleware.auth import require_api_key
+from src.middleware.auth import require_current_user
 
 router = APIRouter(prefix="/api/v1/ai", tags=["AI"])
 logger = logging.getLogger(__name__)
@@ -14,9 +16,9 @@ logger = logging.getLogger(__name__)
 
 class AIRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
-    system: str | None = None
-    provider: Literal["rakuten_claude", "rakuten_openai", "rakuten_llm"] | None = None
-    model: str | None = None
+    system: Optional[str] = None
+    provider: Optional[Literal["rakuten_claude", "rakuten_openai", "rakuten_llm"]] = None
+    model: Optional[str] = None
     max_tokens: int = Field(default=2048, ge=1, le=16384)
     web_search: bool = False
 
@@ -29,7 +31,7 @@ class AIResponse(BaseModel):
     output_tokens: int = 0
 
 
-@router.post("/query", response_model=AIResponse, dependencies=[Depends(require_api_key)])
+@router.post("/query", response_model=AIResponse, dependencies=[Depends(require_current_user)])
 async def query(body: AIRequest) -> AIResponse:
     from anthropic import AsyncAnthropic
 
@@ -76,7 +78,7 @@ async def query(body: AIRequest) -> AIResponse:
     )
 
 
-@router.get("/providers", dependencies=[Depends(require_api_key)])
+@router.get("/providers", dependencies=[Depends(require_current_user)])
 async def providers() -> dict:
     return {
         "default": "rakuten_claude",

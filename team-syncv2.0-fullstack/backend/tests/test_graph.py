@@ -1,13 +1,13 @@
 """
 Unit tests for the LangGraph PRD workflow.
 
-These tests mock the Anthropic client so they run without a real API key.
+These tests cover routing and pause/resume helpers without a real API key.
 """
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.graph.edges import route_after_analyze, route_entry
 from src.graph.nodes import _score_prd, _extract_context_summary, _placeholder_guard
+from src.graph.graph import get_default_state
+from src.routers.sessions import _build_resume_command
 from src.graph.state import PRDState
 from langgraph.graph import END
 
@@ -15,11 +15,7 @@ from langgraph.graph import END
 # ── Edge routing tests ────────────────────────────────────────────────────────
 
 def make_state(**overrides) -> PRDState:
-    base = PRDState(
-        messages=[], mode="analyze", context_summary="",
-        prd_markdown="", quality_score=0, grade="", file_name="",
-        recipient_email="", recipient_name="", jira_decision="",
-    )
+    base = get_default_state()
     base.update(overrides)
     return base
 
@@ -31,7 +27,7 @@ def test_route_entry_defaults_to_analyze():
 
 def test_route_entry_goes_to_generate_when_mode_set_and_no_prd():
     state = make_state(mode="generate", prd_markdown="")
-    assert route_entry(state) == "generate_prd"
+    assert route_entry(state) == "generate_prd_outline"
 
 
 def test_route_entry_stays_on_analyze_if_prd_already_exists():
@@ -48,7 +44,7 @@ def test_route_after_analyze_ends_when_still_chatting():
 
 def test_route_after_analyze_goes_to_generate_when_signal_detected():
     state = make_state(mode="generate", prd_markdown="")
-    assert route_after_analyze(state) == "generate_prd"
+    assert route_after_analyze(state) == "generate_prd_outline"
 
 
 def test_route_after_analyze_ends_if_prd_already_present():
@@ -64,13 +60,15 @@ MINIMAL_PRD = """\
 # Goals
 # User Stories / Functional Requirements
 **FR1**: As a user I want something.
+**FR2**: As a user I want something else.
+**FR3**: As a manager I want reporting.
+**FR4**: As an admin I want permissions.
+**FR5**: As a user I want notifications.
 # Non-Functional Requirements
 # Scope
 # Success Metrics
-# Test Cases
-TC001: test TC002: test TC003: test TC004: test TC005: test
-TC006: test TC007: test TC008: test TC009: test TC010: test
-TC011: test TC012: test TC013: test TC014: test TC015: test
+# Technical Considerations
+# Timeline and Milestones
 """ + "x" * 5100  # push length above 5000
 
 
@@ -113,93 +111,48 @@ def test_placeholder_guard_passes_real_name():
     assert _placeholder_guard("Project: Expense Tracker Pro") is False
 
 
-# ── Graph integration test (mocked LLM) ──────────────────────────────────────
+# ── Resume command helpers ───────────────────────────────────────────────────
 
-@pytest.mark.asyncio
-async def test_analyze_node_continues_when_no_signal(graph, thread_config):
-    """Verify the graph ends the turn when Sam is still asking questions."""
-    mock_response = "What platform are you targeting for this app?"
+def test_resume_command_approving_outline_goes_to_generate_prd():
+    cmd = _build_resume_command({"form": "prd_outline_form"}, {"decision": "approve"})
 
-    with patch("src.graph.nodes._make_client") as mock_client_fn:
-        mock_stream = AsyncMock()
-        mock_stream.__aenter__ = AsyncMock(return_value=mock_stream)
-        mock_stream.__aexit__ = AsyncMock(return_value=False)
-        mock_stream.text_stream = _async_iter([mock_response])
-
-        mock_client = MagicMock()
-        mock_client.messages.stream.return_value = mock_stream
-        mock_client_fn.return_value = mock_client
-
-        result = await graph.ainvoke(
-            {
-                "messages": [{"role": "user", "content": "I want to build an expense app"}],
-                "mode": "analyze",
-                "context_summary": "", "prd_markdown": "", "quality_score": 0,
-                "grade": "", "file_name": "", "recipient_email": "",
-                "recipient_name": "", "jira_decision": "",
-            },
-            config=thread_config,
-        )
-
-    assert result["mode"] == "analyze"
-    assert result["prd_markdown"] == ""
-    assert any(m["role"] == "assistant" for m in result["messages"])
+    assert cmd.goto == "generate_prd"
+    assert cmd.update["pending_interrupt"] is None
+    assert cmd.update["outline_feedback"] == ""
 
 
-@pytest.mark.asyncio
-async def test_analyze_node_triggers_generation_on_signal(graph, thread_config):
-    """Verify mode switches to generate when GENERATE_PRD: signal is emitted."""
-    signal = (
-        "GENERATE_PRD:\n- Project: Expense Tracker\n- Type: New Product\n"
-        "- Platform: iOS\n- Key Features: receipts, categories\n"
-        "- Target Users: freelancers\n- Timeline: Q3 2026\n"
-        "- Success Metric: 70% reduction in manual entry\n\n"
-        "Shall I proceed with generating the complete PRD?"
+def test_resume_command_revising_outline_returns_to_analyze():
+    cmd = _build_resume_command(
+        {"form": "prd_outline_form"},
+        {"decision": "revise", "feedback": "Add admin approval flow."},
     )
-    prd_text = "# Classification Summary\n" + "content " * 1000
 
-    call_count = 0
-
-    async def fake_text_stream_factory(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            return _async_iter([signal])
-        return _async_iter([prd_text])
-
-    with patch("src.graph.nodes._make_client") as mock_client_fn:
-        mock_client = MagicMock()
-
-        def make_mock_stream(*args, **kwargs):
-            m = AsyncMock()
-            m.__aenter__ = AsyncMock(return_value=m)
-            m.__aexit__ = AsyncMock(return_value=False)
-            if call_count == 0:
-                m.text_stream = _async_iter([signal])
-            else:
-                m.text_stream = _async_iter([prd_text])
-            return m
-
-        mock_client.messages.stream.side_effect = make_mock_stream
-        mock_client_fn.return_value = mock_client
-
-        result = await graph.ainvoke(
-            {
-                "messages": [{"role": "user", "content": "Yes, generate it"}],
-                "mode": "analyze",
-                "context_summary": "", "prd_markdown": "", "quality_score": 0,
-                "grade": "", "file_name": "", "recipient_email": "",
-                "recipient_name": "", "jira_decision": "",
-            },
-            config=thread_config,
-        )
-
-    # Mode should have transitioned; prd_markdown should be populated
-    assert result["mode"] == "generate"
+    assert cmd.goto == "analyze"
+    assert cmd.update["mode"] == "analyze"
+    assert cmd.update["prd_outline"] == ""
+    assert cmd.update["pending_interrupt"] is None
+    assert "Add admin approval flow." in cmd.update["messages"][0]["content"]
 
 
-# ── Async iterator helper for mocking stream.text_stream ─────────────────────
+def test_resume_command_email_form_goes_to_send_email():
+    cmd = _build_resume_command(
+        {"form": "email_form"},
+        {"name": "Taylor", "email": "taylor@example.com"},
+    )
 
-async def _async_iter(items):
-    for item in items:
-        yield item
+    assert cmd.goto == "send_email"
+    assert cmd.update["recipient_name"] == "Taylor"
+    assert cmd.update["recipient_email"] == "taylor@example.com"
+    assert cmd.update["pending_interrupt"] is None
+
+
+def test_resume_command_jira_skip_only_updates_state():
+    cmd = _build_resume_command(
+        {"form": "jira_form"},
+        {"decision": "skip", "project_key": "TS"},
+    )
+
+    assert cmd.goto == ()
+    assert cmd.update["jira_decision"] == "skip"
+    assert cmd.update["jira_project_key"] == "TS"
+    assert cmd.update["pending_interrupt"] is None

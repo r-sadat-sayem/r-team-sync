@@ -13,17 +13,29 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     log_level: str = "info"
+    frontend_url: str = "http://localhost:5173"
 
     # Database — LangGraph checkpointer + app tables share one DB
     database_url: str = "sqlite+aiosqlite:///./dev.db"
 
     # Auth
-    backend_api_key: str = "dev-change-me"
+    auth_cookie_name: str = "teamsync_session"
+    auth_cookie_secure: bool = False
+    auth_cookie_samesite: str = "lax"
+    auth_session_days: int = 14
+    google_oauth_state_cookie_name: str = "teamsync_google_oauth_state"
 
     # Rakuten AI Gateway — Anthropic (Claude)
     rakuten_ai_gateway_key: str = ""
     rakuten_anthropic_base_url: str = "https://api.ai.public.rakuten-it.com/anthropic/"
     rakuten_anthropic_model: str = "claude-3-7-sonnet-20250219"
+
+    # Google Login OAuth 2.0 (app login)
+    # Setup: console.cloud.google.com → Credentials → OAuth 2.0 Client ID (Web)
+    # Callback URL: http://localhost:8000/api/v1/auth/google/callback
+    # Scopes: openid email profile
+    google_login_client_id: str = ""
+    google_login_client_secret: str = ""
 
     # Gmail OAuth 2.0 (preferred — user logs in via popup)
     # Setup: console.cloud.google.com → Enable Gmail API → OAuth 2.0 Client ID (Web)

@@ -7,16 +7,17 @@ import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Download, Copy, Check, FileText, ChevronLeft, Mail, Ticket } from 'lucide-react';
+import { Download, Copy, Check, FileText, ChevronLeft, Mail, Ticket, ChevronDown } from 'lucide-react';
 import type { PRDDocument } from '../../types';
 
 export function PRDViewer() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { state } = useApp();
+  const { activeTab } = useApp();
   const [prd, setPrd] = useState<PRDDocument | null>(null);
   const [copied, setCopied] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [tocOpen, setTocOpen] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -24,10 +25,10 @@ export function PRDViewer() {
       if (found) {
         setPrd(found);
       }
-    } else if (state.currentPRD) {
-      setPrd(state.currentPRD);
+    } else if (activeTab.currentPRD) {
+      setPrd(activeTab.currentPRD);
     }
-  }, [id, state.currentPRD]);
+  }, [id, activeTab.currentPRD]);
 
   const handleCopy = async () => {
     if (prd?.content) {
@@ -79,7 +80,7 @@ export function PRDViewer() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-4">
           {id && (
             <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')}>
@@ -88,14 +89,14 @@ export function PRDViewer() {
             </Button>
           )}
           <div>
-            <h1 className="text-2xl font-bold text-text-primary">{prd.title}</h1>
+            <h1 className="text-xl sm:text-2xl font-bold text-text-primary">{prd.title}</h1>
             <p className="text-sm text-text-muted">
               Created {new Date(prd.createdAt).toLocaleDateString()}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Quality Badge */}
           <span className={`px-3 py-1 rounded-full text-sm font-medium border ${getGradeColor(prd.grade)}`}>
             {prd.grade} Grade • {prd.qualityScore}/100
@@ -125,30 +126,43 @@ export function PRDViewer() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* Table of Contents */}
         <Card className="lg:col-span-1 h-fit">
-          <CardHeader>
+          {/* Mobile toggle */}
+          <button
+            className="lg:hidden w-full flex items-center justify-between px-6 py-4 border-b border-white/8 text-sm font-medium text-text-primary"
+            onClick={() => setTocOpen(v => !v)}
+            aria-expanded={tocOpen}
+            aria-controls="toc-content"
+          >
+            <span>Table of Contents</span>
+            <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${tocOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {/* Desktop header */}
+          <CardHeader className="hidden lg:block">
             <CardTitle className="text-sm">Contents</CardTitle>
           </CardHeader>
-          <CardContent>
-            <nav className="space-y-1">
-              {prd.sections.map((section) => (
-                <button
-                  key={section.id}
-                  onClick={() => {
-                    setActiveSection(section.id);
-                    document.getElementById(section.title.toLowerCase().replace(/\s+/g, '-'))?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                    activeSection === section.id
-                      ? 'bg-primary/20 text-primary-light'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                  }`}
-                  style={{ paddingLeft: `${section.level * 12 + 12}px` }}
-                >
-                  {section.title}
-                </button>
-              ))}
-            </nav>
-          </CardContent>
+          <div id="toc-content" className={tocOpen ? 'block' : 'hidden lg:block'}>
+            <CardContent>
+              <nav className="space-y-1">
+                {prd.sections.map((section) => (
+                  <button
+                    key={section.id}
+                    onClick={() => {
+                      setActiveSection(section.id);
+                      document.getElementById(section.title.toLowerCase().replace(/\s+/g, '-'))?.scrollIntoView({ behavior: 'smooth' });
+                    }}
+                    className={`block w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      activeSection === section.id
+                        ? 'bg-primary/20 text-primary-light'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                    }`}
+                    style={{ paddingLeft: `${section.level * 12 + 12}px` }}
+                  >
+                    {section.title}
+                  </button>
+                ))}
+              </nav>
+            </CardContent>
+          </div>
         </Card>
 
         {/* PRD Content */}

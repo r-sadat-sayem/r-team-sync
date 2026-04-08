@@ -17,6 +17,8 @@ python-multipart>=0.0.17
 sqlalchemy>=2.0.36
 asyncpg>=0.30.0
 aiosqlite>=0.20.0        # SQLite for tests only
+greenlet>=3.0.0          # required by SQLAlchemy async engine
+psycopg[binary]>=3.1.0   # psycopg3 with bundled libpq — required by langgraph-checkpoint-postgres
 
 # Config & validation
 pydantic>=2.10.3
@@ -24,3 +26,6 @@ pydantic-settings>=2.6.1
 
 # HTTP client (JIRA, Gmail — Phase 2)
 httpx>=0.28.1
+
+# PDF text extraction (file upload feature)
+pypdf>=4.0.0

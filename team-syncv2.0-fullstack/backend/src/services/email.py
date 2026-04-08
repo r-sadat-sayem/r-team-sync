@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Email service — two auth modes:
 
@@ -17,14 +19,17 @@ import base64
 import logging
 import smtplib
 import ssl
+from typing import Optional
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import httpx
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.services.oauth_connections import get_oauth_connection
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +62,15 @@ def _smtp_send(sender: str, recipient: str, raw_message: str) -> None:
         server.sendmail(sender, recipient, raw_message)
 
 
-def _resolve_sender(access_token: str | None, session_email: str | None) -> str:
+def _resolve_sender(access_token: Optional[str], session_email: Optional[str]) -> str:
     """Pick the From address — OAuth email first, then SMTP sender."""
     if session_email:
         return session_email
     return settings.gmail_sender
+
+
+async def get_gmail_connection(db: AsyncSession, user_id: int):
+    return await get_oauth_connection(db, user_id, "gmail")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -73,8 +82,8 @@ async def send_prd_email(
     file_name: str,
     quality_score: int,
     grade: str,
-    access_token: str | None = None,
-    sender_email: str | None = None,
+    access_token: Optional[str] = None,
+    sender_email: Optional[str] = None,
 ) -> None:
     sender = _resolve_sender(access_token, sender_email)
 
@@ -118,8 +127,8 @@ async def send_jira_notification(
     project_key: str,
     prd_title: str,
     notes: str,
-    access_token: str | None = None,
-    sender_email: str | None = None,
+    access_token: Optional[str] = None,
+    sender_email: Optional[str] = None,
 ) -> None:
     sender = _resolve_sender(access_token, sender_email)
 

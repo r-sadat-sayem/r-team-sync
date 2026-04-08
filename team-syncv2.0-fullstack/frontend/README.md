@@ -40,14 +40,16 @@ Copy `.env.example` to `.env` and update the values:
 cp .env.example .env
 ```
 
-Edit `.env` with your n8n webhook URLs:
+For local Vite development, leave `VITE_API_URL` empty and let the dev server proxy
+`/api` requests to the backend:
 
 ```env
-VITE_N8N_BASE_URL=http://localhost:5678
-VITE_CHAT_WEBHOOK_ID=unified-webhook-id
-VITE_EMAIL_WEBHOOK_ID=d9d4af96-c7a3-4dcf-8d59-708ffd5f1a7f
-VITE_JIRA_WEBHOOK_ID=jira-approval-form-webhook
+VITE_API_URL=
+VITE_API_PROXY_TARGET=http://localhost:8000
 ```
+
+Set `VITE_API_URL` only when the frontend needs to call a backend on a different
+origin directly.
 
 ### Development
 
@@ -98,15 +100,11 @@ src/
 - `/email` - Email form
 - `/jira` - JIRA ticket viewer
 
-## Integration with n8n
+## Authentication
 
-The frontend communicates directly with n8n webhooks:
-
-1. **Chat messages** → `POST /webhook/{CHAT_WEBHOOK_ID}`
-2. **Email form** → `POST /webhook/{EMAIL_WEBHOOK_ID}`
-3. **JIRA approval** → `POST /webhook/{JIRA_WEBHOOK_ID}`
-
-Data persistence is handled via localStorage for the demo.
+The app now uses TeamSync account sign-up/login with an HTTP-only session cookie.
+PRD history and active chat session state are namespaced per signed-in user in localStorage.
+Google social login is also supported through backend-managed OAuth redirects.
 
 ## License
 

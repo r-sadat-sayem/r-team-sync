@@ -1,6 +1,6 @@
 // components/chat/InlineEmailForm.tsx
 import React, { useState, useCallback } from 'react';
-import { Mail, Send, Loader2, Award, ExternalLink, CheckCircle } from 'lucide-react';
+import { Mail, Send, Loader2, Award, ExternalLink, CheckCircle, SkipForward } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { api } from '../../services/api';
@@ -22,6 +22,7 @@ const gradeColors: Record<string, string> = {
 };
 
 export function InlineEmailForm({ interrupt, sessionId, isLoading, onSubmit }: Props) {
+  const [step, setStep]             = useState<'confirm' | 'form'>('confirm');
   const [name, setName]             = useState('');
   const [email, setEmail]           = useState('');
   const [errors, setErrors]         = useState<{ name?: string; email?: string }>({});
@@ -73,55 +74,91 @@ export function InlineEmailForm({ interrupt, sessionId, isLoading, onSubmit }: P
   };
 
   return (
-    <div className="max-w-md w-full bg-background-tertiary border border-white/10 rounded-2xl p-5 space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
-          <Mail className="w-4 h-4 text-primary-light" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-text-primary">Email your PRD</p>
-          <p className="text-xs text-text-muted mt-0.5">{interrupt.message}</p>
-        </div>
-        {score !== undefined && grade && (
-          <span className={`px-2 py-1 rounded-lg text-xs font-bold border flex-shrink-0 flex items-center gap-1 ${gradeColors[grade] ?? gradeColors.F}`}>
-            <Award className="w-3 h-3" />{grade} · {score}/100
-          </span>
-        )}
-      </div>
-
-      {/* Gmail connection status */}
-      {connected ? (
-        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
-          <CheckCircle className="w-4 h-4 flex-shrink-0" />
-          <span>Sending as <strong>{gmailUser}</strong></span>
-        </div>
+    <div className="w-full max-w-md bg-background-tertiary border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
+      {step === 'confirm' ? (
+        /* ── Confirm step ── */
+        <>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <Mail className="w-4 h-4 text-primary-light" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-text-primary">PRD ready!</p>
+              <p className="text-xs text-text-muted mt-0.5">Would you like to email it to someone?</p>
+            </div>
+            {score !== undefined && grade && (
+              <span className={`px-2 py-1 rounded-lg text-xs font-bold border flex-shrink-0 flex items-center gap-1 ${gradeColors[grade] ?? gradeColors.F}`}>
+                <Award className="w-3 h-3" />{grade} · {score}/100
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button className="flex-1" onClick={() => setStep('form')} disabled={isLoading}>
+              <Mail className="w-4 h-4 mr-2" />Send Email →
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => onSubmit({ name: '', email: '__skip__' })}
+              disabled={isLoading}
+              title="Skip email"
+            >
+              <SkipForward className="w-4 h-4" />
+            </Button>
+          </div>
+        </>
       ) : (
-        <div className="space-y-2">
-          <Button type="button" variant="secondary" className="w-full"
-            onClick={handleConnect} disabled={connecting || isLoading}>
-            {connecting
-              ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Connecting…</>
-              : <><ExternalLink className="w-4 h-4 mr-2" />Connect Gmail to send</>}
-          </Button>
-          <p className="text-xs text-text-muted text-center">
-            or continue — email will use the shared sender account
-          </p>
-        </div>
-      )}
+        /* ── Form step ── */
+        <>
+          {/* Header */}
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <Mail className="w-4 h-4 text-primary-light" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-text-primary">Email your PRD</p>
+              <p className="text-xs text-text-muted mt-0.5">{interrupt.message}</p>
+            </div>
+            {score !== undefined && grade && (
+              <span className={`px-2 py-1 rounded-lg text-xs font-bold border flex-shrink-0 flex items-center gap-1 ${gradeColors[grade] ?? gradeColors.F}`}>
+                <Award className="w-3 h-3" />{grade} · {score}/100
+              </span>
+            )}
+          </div>
 
-      {/* Recipient form */}
-      <form onSubmit={handleSubmit} className="space-y-3">
-        <Input placeholder="Recipient's full name" value={name}
-          onChange={e => setName(e.target.value)} error={errors.name} disabled={isLoading} />
-        <Input type="email" placeholder="recipient@email.com" value={email}
-          onChange={e => setEmail(e.target.value)} error={errors.email} disabled={isLoading} />
-        <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading
-            ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending…</>
-            : <><Send className="w-4 h-4 mr-2" />Send PRD</>}
-        </Button>
-      </form>
+          {/* Gmail connection status */}
+          {connected ? (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-sm">
+              <CheckCircle className="w-4 h-4 flex-shrink-0" />
+              <span>Sending as <strong>{gmailUser}</strong></span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Button type="button" variant="secondary" className="w-full"
+                onClick={handleConnect} disabled={connecting || isLoading}>
+                {connecting
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Connecting…</>
+                  : <><ExternalLink className="w-4 h-4 mr-2" />Connect Gmail to send</>}
+              </Button>
+              <p className="text-xs text-text-muted text-center">
+                or continue — email will use the shared sender account
+              </p>
+            </div>
+          )}
+
+          {/* Recipient form */}
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <Input placeholder="Recipient's full name" value={name}
+              onChange={e => setName(e.target.value)} error={errors.name} disabled={isLoading} />
+            <Input type="email" placeholder="recipient@email.com" value={email}
+              onChange={e => setEmail(e.target.value)} error={errors.email} disabled={isLoading} />
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading
+                ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Sending…</>
+                : <><Send className="w-4 h-4 mr-2" />Send PRD</>}
+            </Button>
+          </form>
+        </>
+      )}
     </div>
   );
 }

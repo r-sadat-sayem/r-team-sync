@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 Gmail OAuth 2.0 flow — same pattern as JIRA auth.
 
@@ -22,13 +24,23 @@ Setup (one-time, team admin):
   4. Copy Client ID + Secret → GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in .env
 """
 import logging
+from typing import Optional
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.middleware.auth import require_api_key
+from src.db import get_db_session
+from src.middleware.auth import require_current_user, require_session_owner
+from src.models import User
+from src.services.oauth_connections import (
+    delete_oauth_connection,
+    get_oauth_connection,
+    upsert_oauth_connection,
+)
 
 router = APIRouter(prefix="/api/v1/email/auth", tags=["Gmail Auth"])
 logger = logging.getLogger(__name__)
@@ -42,31 +54,17 @@ _SCOPES    = " ".join([
     "https://www.googleapis.com/auth/userinfo.email",
 ])
 
-# ── In-process token store ────────────────────────────────────────────────────
-
-_token_store: dict[str, dict] = {}
-
-
-def get_gmail_token(session_id: str) -> dict | None:
-    return _token_store.get(session_id)
-
-
-def set_gmail_token(session_id: str, data: dict) -> None:
-    _token_store[session_id] = data
-
-
-def clear_gmail_token(session_id: str) -> None:
-    _token_store.pop(session_id, None)
-
-
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.get("/connect", dependencies=[Depends(require_api_key)])
+@router.get("/connect")
 async def connect(
     request: Request,
     session_id: str = Query(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     """Return the Google OAuth URL for this session."""
+    await require_session_owner(session_id, current_user, db)
     if not settings.google_client_id:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -83,24 +81,26 @@ async def connect(
         "prompt":        "consent",   # always show consent to get refresh token
         "state":         session_id,
     }
-    url = _AUTH_URL + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+    url = _AUTH_URL + "?" + urlencode(params)
     return {"url": url, "session_id": session_id}
 
 
 @router.get("/callback", name="gmail_oauth_callback", include_in_schema=False)
 async def callback(
     request: Request,
-    code: str | None      = Query(default=None),
+    code: Optional[str] = Query(default=None),
     state: str            = Query(...),
-    error: str | None     = Query(default=None),
-    error_description: str | None = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    error_description: Optional[str] = Query(default=None),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db_session),
 ) -> HTMLResponse:
     """Google redirects here. Exchange code for tokens, close tab."""
+    await require_session_owner(state, current_user, db)
     if error:
         logger.warning("Gmail OAuth error for session %s: %s", state, error)
         return _close_tab_html(False, f"Gmail connection failed: {error_description or error}")
 
-    session_id   = state
     callback_url = str(request.url_for("gmail_oauth_callback"))
 
     try:
@@ -130,31 +130,44 @@ async def callback(
             profile = profile_resp.json()
 
     except Exception as exc:
-        logger.exception("Gmail OAuth callback failed for session %s: %s", session_id, exc)
+        logger.exception("Gmail OAuth callback failed for user %s: %s", current_user.id, exc)
         return _close_tab_html(False, f"Connection failed: {exc}")
 
-    set_gmail_token(session_id, {
-        "access_token":  tokens["access_token"],
-        "refresh_token": tokens.get("refresh_token", ""),
-        "email":         profile.get("email", ""),
-        "name":          profile.get("name", ""),
-    })
+    await upsert_oauth_connection(
+        db,
+        current_user.id,
+        "gmail",
+        access_token=tokens["access_token"],
+        refresh_token=tokens.get("refresh_token", ""),
+        account_email=profile.get("email", ""),
+        account_name=profile.get("name", ""),
+    )
 
-    logger.info("Gmail connected: session=%s email=%s", session_id, profile.get("email"))
+    logger.info("Gmail connected: user=%s email=%s", current_user.id, profile.get("email"))
     return _close_tab_html(True, f"Connected as {profile.get('email')}")
 
 
-@router.get("/status", dependencies=[Depends(require_api_key)])
-async def auth_status(session_id: str = Query(...)) -> dict:
-    token = get_gmail_token(session_id)
+@router.get("/status")
+async def auth_status(
+    session_id: str = Query(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    await require_session_owner(session_id, current_user, db)
+    token = await get_oauth_connection(db, current_user.id, "gmail")
     if not token:
         return {"connected": False, "email": None, "name": None}
-    return {"connected": True, "email": token["email"], "name": token["name"]}
+    return {"connected": True, "email": token.account_email, "name": token.account_name}
 
 
-@router.delete("/disconnect", dependencies=[Depends(require_api_key)])
-async def disconnect(session_id: str = Query(...)) -> dict:
-    clear_gmail_token(session_id)
+@router.delete("/disconnect")
+async def disconnect(
+    session_id: str = Query(...),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    await require_session_owner(session_id, current_user, db)
+    await delete_oauth_connection(db, current_user.id, "gmail")
     return {"disconnected": True}
 
 

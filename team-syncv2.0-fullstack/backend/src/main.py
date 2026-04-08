@@ -12,12 +12,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.routers import ai, chat, email_auth, jira_auth, sessions
+from src.db import init_db
+from src.routers import ai, auth, chat, email_auth, jira_auth, sessions
 
+_log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    level=_log_level,
     format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
 )
+# When DEBUG=true, force all loggers (including third-party) to DEBUG
+if settings.debug:
+    logging.getLogger().setLevel(logging.DEBUG)
+    for _name in ("src", "langgraph", "langchain", "httpx", "uvicorn", "fastapi"):
+        logging.getLogger(_name).setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +35,8 @@ async def lifespan(app: FastAPI):
     The graph is stored on app.state so every request handler can access it.
     """
     from src.graph.graph import build_graph
+
+    await init_db()
 
     if "postgresql" in settings.database_url:
         # Production / Docker — use PostgreSQL checkpointer
@@ -57,16 +66,18 @@ app = FastAPI(
     description="LangGraph + Anthropic SDK PRD automation backend.",
     version="2.0.0",
     lifespan=lifespan,
+    debug=settings.debug,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173", settings.frontend_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(sessions.router)
 app.include_router(ai.router)

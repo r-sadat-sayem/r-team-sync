@@ -1,5 +1,5 @@
 // components/history/History.tsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
@@ -53,14 +53,14 @@ export function History() {
 
   const handleDelete = (id: string) => {
     const updated = history.filter(p => p.id !== id);
-    localStorage.setItem('prd_history', JSON.stringify(updated));
+    api.replacePRDHistory(updated);
     setHistory(updated);
     // Sync context so Dashboard stays accurate
     dispatch({ type: 'SET_CURRENT_PRD', payload: null });
   };
 
   const handleClearAll = () => {
-    localStorage.removeItem('prd_history');
+    api.clearPRDHistory();
     setHistory([]);
     dispatch({ type: 'SET_CURRENT_PRD', payload: null });
     setConfirmClear(false);
@@ -72,7 +72,8 @@ export function History() {
 
   const handleResumeSession = (prd: PRDDocument) => {
     if (!prd.sessionId) return;
-    localStorage.setItem('current_session_id', prd.sessionId);
+    // Opens a new tab (or switches to an existing one) with this session
+    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId: prd.sessionId, label: prd.title } });
     navigate('/');
   };
 
@@ -97,16 +98,16 @@ export function History() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 w-full sm:w-auto">
           {/* Search */}
-          <div className="relative">
+          <div className="relative flex-1 sm:flex-none">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
             <input
               type="text"
               placeholder="Search PRDs…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="pl-9 pr-8 py-2 bg-background-tertiary border border-white/10 rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary/50 w-56"
+              className="pl-9 pr-8 py-2 bg-background-tertiary border border-white/10 rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-primary/50 w-full sm:w-56"
             />
             {search && (
               <button

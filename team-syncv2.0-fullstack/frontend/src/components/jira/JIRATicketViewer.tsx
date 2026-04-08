@@ -1,5 +1,5 @@
 // components/jira/JIRATicketViewer.tsx
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { JIRAApprovalForm } from '../../types';
 import { useApp } from '../../context/AppContext';
@@ -7,18 +7,93 @@ import { useApp } from '../../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Ticket, CheckCircle, AlertCircle, ChevronLeft, ExternalLink, Clock, User } from 'lucide-react';
+import { Ticket, CheckCircle, AlertCircle, ChevronLeft, ExternalLink, Clock, User, Loader2, Link2, Link2Off, Eye, EyeOff } from 'lucide-react';
+import { api } from '../../services/api';
 
 
 export function JIRATicketViewer() {
   const navigate = useNavigate();
-  const { state, dispatch } = useApp();
+  const { state, dispatch, activeTab, refreshJiraConnection } = useApp();
   const [approvalForm, setApprovalForm] = useState<JIRAApprovalForm>({
     decision: 'APPROVE',
     notes: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showApprovalForm, setShowApprovalForm] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [showPatForm, setShowPatForm] = useState(false);
+  const [patForm, setPatForm] = useState({ base_url: '', username: '', api_token: '', project_key: '' });
+  const [patError, setPatError] = useState('');
+  const [savingPat, setSavingPat] = useState(false);
+  const [showPat, setShowPat] = useState(false);
+
+  const jira = state.jiraConnection;
+
+  const pollStatus = useCallback(async () => {
+    try {
+      await refreshJiraConnection();
+    } finally {
+      setConnecting(false);
+    }
+  }, [refreshJiraConnection]);
+
+  const handleConnect = async () => {
+    setConnecting(true);
+    try {
+      const url = await api.getUserJiraConnectUrl();
+      const popup = window.open(url, 'jira-oauth', 'width=520,height=680,left=200,top=100');
+
+      const handler = (e: MessageEvent) => {
+        if (e.data?.type === 'jira_oauth') {
+          window.removeEventListener('message', handler);
+          popup?.close();
+          void pollStatus();
+        }
+      };
+      window.addEventListener('message', handler);
+
+      const checkClosed = setInterval(() => {
+        if (popup?.closed) {
+          clearInterval(checkClosed);
+          window.removeEventListener('message', handler);
+          void pollStatus();
+        }
+      }, 500);
+    } catch {
+      setConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await api.disconnectJira();
+      dispatch({ type: 'SET_JIRA_CONNECTION', payload: { connected: false, user_name: null, cloud_name: null, user_email: null, auth_mode: null, project_url: null } });
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const handleSavePat = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPatError('');
+    if (!patForm.base_url || !patForm.username || !patForm.api_token) {
+      setPatError('Base URL, username and API token are required.');
+      return;
+    }
+    setSavingPat(true);
+    try {
+      await api.saveJiraPat(patForm);
+      await refreshJiraConnection();
+      setShowPatForm(false);
+      setPatForm({ base_url: '', username: '', api_token: '', project_key: '' });
+    } catch (err: any) {
+      setPatError(err.message || 'Failed to save credentials.');
+    } finally {
+      setSavingPat(false);
+    }
+  };
 
   const handleApprovalSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,16 +140,148 @@ export function JIRATicketViewer() {
           </Button>
           <h1 className="text-2xl font-bold text-text-primary">JIRA Tickets</h1>
         </div>
-        {state.jiraResult?.epic_url && (
-          <Button variant="secondary" onClick={() => window.open(state.jiraResult!.epic_url, '_blank')}>
+        {activeTab.jiraResult?.epic_url && (
+          <Button variant="secondary" onClick={() => window.open(activeTab.jiraResult!.epic_url, '_blank')}>
             <ExternalLink className="w-4 h-4 mr-2" />
             Open Epic
           </Button>
         )}
       </div>
 
+      {/* JIRA Account Connection */}
+      <Card>
+        <CardContent className="p-5 space-y-4">
+          {/* Status row */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${jira?.connected ? 'bg-emerald-500/20' : 'bg-background-tertiary'}`}>
+                <Ticket className={`w-4 h-4 ${jira?.connected ? 'text-emerald-400' : 'text-text-muted'}`} />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-text-primary">Atlassian / JIRA</p>
+                {jira?.connected ? (
+                  <p className="text-xs text-emerald-400 mt-0.5">
+                    Connected as <strong>{jira.user_name}</strong>
+                    {jira.cloud_name ? ` · ${jira.cloud_name}` : ''}
+                    {jira.auth_mode === 'pat' && <span className="ml-1 opacity-70">(PAT)</span>}
+                  </p>
+                ) : (
+                  <p className="text-xs text-text-muted mt-0.5">
+                    Not connected — tickets will use the service account
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {jira?.connected ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="text-xs text-emerald-400 font-medium">Connected</span>
+                </div>
+                {jira.project_url && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => window.open(jira.project_url!, '_blank')}
+                    title="Open JIRA project"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                  </Button>
+                )}
+                <Button variant="secondary" size="sm" onClick={handleDisconnect} disabled={disconnecting}>
+                  {disconnecting
+                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Disconnecting…</>
+                    : <><Link2Off className="w-4 h-4 mr-2" />Disconnect</>}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={handleConnect} disabled={connecting}>
+                  {connecting
+                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Connecting…</>
+                    : <><Link2 className="w-4 h-4 mr-2" />Atlassian OAuth</>}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPatForm(v => !v)}
+                >
+                  {showPatForm ? 'Cancel' : 'Use PAT'}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* PAT credentials form */}
+          {!jira?.connected && showPatForm && (
+            <form onSubmit={handleSavePat} className="space-y-3 pt-1 border-t border-white/10">
+              <p className="text-xs text-text-muted pt-2">
+                Enter your JIRA server credentials. The token is stored securely per your account.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-text-secondary mb-1">JIRA Base URL</label>
+                  <Input
+                    placeholder="https://jira.your-company.com"
+                    value={patForm.base_url}
+                    onChange={e => setPatForm(f => ({ ...f, base_url: e.target.value }))}
+                    disabled={savingPat}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Username</label>
+                  <Input
+                    placeholder="your_username"
+                    value={patForm.username}
+                    onChange={e => setPatForm(f => ({ ...f, username: e.target.value }))}
+                    disabled={savingPat}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-text-secondary mb-1">Project Key</label>
+                  <Input
+                    placeholder="PROJ"
+                    value={patForm.project_key}
+                    onChange={e => setPatForm(f => ({ ...f, project_key: e.target.value }))}
+                    disabled={savingPat}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-medium text-text-secondary mb-1">API Token / Personal Access Token</label>
+                  <div className="relative">
+                    <Input
+                      type={showPat ? 'text' : 'password'}
+                      placeholder="Paste your token here"
+                      value={patForm.api_token}
+                      onChange={e => setPatForm(f => ({ ...f, api_token: e.target.value }))}
+                      disabled={savingPat}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPat(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-secondary transition-colors"
+                      tabIndex={-1}
+                    >
+                      {showPat ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              {patError && <p className="text-xs text-red-400">{patError}</p>}
+              <Button type="submit" size="sm" className="w-full" disabled={savingPat}>
+                {savingPat
+                  ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</>
+                  : <><CheckCircle className="w-4 h-4 mr-2" />Save & Connect</>}
+              </Button>
+            </form>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Real tickets created via LangGraph backend */}
-      {state.jiraResult && (
+      {activeTab.jiraResult && (
         <Card className="border-l-4 border-l-purple-500">
           <CardContent className="p-5 space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
@@ -83,16 +290,16 @@ export function JIRATicketViewer() {
             </div>
             <div className="space-y-2">
               <a
-                href={state.jiraResult.epic_url}
+                href={activeTab.jiraResult.epic_url}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-2 text-sm text-primary-light hover:underline"
               >
                 <div className="w-3 h-3 rounded-full bg-purple-500 flex-shrink-0" />
-                Epic: {state.jiraResult.epic_key}
+                Epic: {activeTab.jiraResult.epic_key}
                 <ExternalLink className="w-3 h-3" />
               </a>
-              {state.jiraResult.task_keys.map(key => (
+              {activeTab.jiraResult.task_keys.map(key => (
                 <div key={key} className="flex items-center gap-2 text-sm text-text-secondary pl-1">
                   <div className="w-2.5 h-2.5 rounded bg-blue-500 flex-shrink-0" />
                   Story: {key}
@@ -103,7 +310,7 @@ export function JIRATicketViewer() {
         </Card>
       )}
 
-      {showApprovalForm && state.jiraApprovalStatus === 'pending' ? (
+      {showApprovalForm && activeTab.jiraApprovalStatus === 'pending' ? (
         <Card className="max-w-2xl">
           <CardHeader>
             <div className="flex items-center gap-3">
@@ -119,14 +326,14 @@ export function JIRATicketViewer() {
             </div>
           </CardHeader>
           <CardContent>
-            {state.currentPRD ? (
+            {activeTab.currentPRD ? (
               <form onSubmit={handleApprovalSubmit} className="space-y-6">
                 <div className="p-4 bg-background-tertiary rounded-lg border border-white/10">
                   <p className="text-sm text-text-secondary mb-2">PRD Summary</p>
-                  <p className="font-medium text-text-primary">{state.currentPRD.title}</p>
+                  <p className="font-medium text-text-primary">{activeTab.currentPRD.title}</p>
                   <div className="flex items-center gap-4 mt-3 text-xs text-text-muted">
-                    <span>Quality: {state.currentPRD.grade}</span>
-                    <span>Test Cases: {state.currentPRD.testCaseCount}</span>
+                    <span>Quality: {activeTab.currentPRD.grade}</span>
+                    <span>Test Cases: {activeTab.currentPRD.testCaseCount}</span>
                   </div>
                 </div>
 
