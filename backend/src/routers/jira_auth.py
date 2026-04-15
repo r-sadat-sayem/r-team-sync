@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _AUTH_URL      = "https://auth.atlassian.com/authorize"
 _TOKEN_URL     = "https://auth.atlassian.com/oauth/token"
 _RESOURCES_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
-_SCOPES        = "read:jira-work write:jira-work read:me offline_access"
+_SCOPES        = "read:jira-work write:jira-work read:jira-user read:me offline_access"
 
 
 def _public_jira_base_url(fallback_url: Optional[str]) -> Optional[str]:
@@ -119,7 +119,20 @@ async def callback(
     Returns a self-closing HTML page — the OAuth tab closes itself.
     """
     # state is either a LangGraph session_id or "user:{id}" from the JIRA tab
-    if not state.startswith("user:"):
+    if state.startswith("user:"):
+        # Verify the state user matches the cookie-authenticated user to prevent
+        # one user's OAuth flow from overwriting another user's tokens.
+        try:
+            state_user_id = int(state.split(":", 1)[1])
+        except (ValueError, IndexError):
+            state_user_id = -1
+        if state_user_id != current_user.id:
+            logger.warning(
+                "JIRA OAuth state user %s does not match authenticated user %s — rejecting",
+                state_user_id, current_user.id,
+            )
+            return _close_tab_html(success=False, message="JIRA connection failed: session mismatch.")
+    else:
         await require_session_owner(state, current_user, db)
     if error:
         logger.warning("JIRA OAuth error for session %s: %s — %s", state, error, error_description)
@@ -488,6 +501,23 @@ async def list_projects(
     except Exception as exc:
         _raise_jira_http_error(exc, "list_projects")
     return {"projects": projects, "total": len(projects)}
+
+
+@router.get("/epics")
+async def list_epics(
+    project_key: str = Query(..., description="Project key to search epics in"),
+    current_user: User = Depends(require_current_user),
+    db: AsyncSession = Depends(get_db_session),
+) -> dict:
+    """Return existing Epics for a project — used to populate the parent-epic selector."""
+    try:
+        svc = await JiraService.for_user(db, current_user.id)
+        epics = await svc.search_epics(project_key)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except Exception as exc:
+        _raise_jira_http_error(exc, "list_epics")
+    return {"epics": epics, "total": len(epics)}
 
 
 class JiraCreateRequest(BaseModel):

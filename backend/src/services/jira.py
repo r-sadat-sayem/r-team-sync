@@ -29,9 +29,19 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.services.oauth_connections import get_oauth_connection
+from src.services.oauth_connections import get_oauth_connection, upsert_oauth_connection
 
 logger = logging.getLogger(__name__)
+
+# Common aliases per logical type (lowercase).  When Jira rejects our configured
+# issue-type name we walk the aliases list against the project's actual types.
+_TYPE_ALIASES: Dict[str, List[str]] = {
+    "epic":    ["epic", "feature", "initiative", "theme", "capability"],
+    "story":   ["story", "user story", "requirement", "feature", "task"],
+    "task":    ["task", "user story", "story", "chore"],
+    "subtask": ["subtask", "sub-task", "sub task", "chore", "technical task", "task"],
+    "bug":     ["bug", "defect", "issue", "problem"],
+}
 
 
 # ── ADF helpers ───────────────────────────────────────────────────────────────
@@ -97,14 +107,25 @@ class JiraService:
         project: str,
         auth_mode: str,
         cloud_url: str = "",
+        # OAuth token-refresh plumbing (only used in "oauth" mode)
+        refresh_token: str = "",
+        db: Optional[AsyncSession] = None,
+        user_id: Optional[int] = None,
+        cloud_id: str = "",
     ) -> None:
-        self._base_url    = base_url
-        self._headers     = {"Accept": "application/json", "Content-Type": "application/json", **auth_headers}
-        self._basic_auth  = basic_auth   # None when using OAuth Bearer
-        self._project     = project
-        self._auth_mode   = auth_mode    # "oauth" | "apikey"
-        self._cloud_url   = cloud_url.rstrip("/")
+        self._base_url      = base_url
+        self._headers       = {"Accept": "application/json", "Content-Type": "application/json", **auth_headers}
+        self._basic_auth    = basic_auth   # None when using OAuth Bearer
+        self._project       = project
+        self._auth_mode     = auth_mode    # "oauth" | "apikey" | "pat"
+        self._cloud_url     = cloud_url.rstrip("/")
+        self._refresh_token = refresh_token
+        self._db            = db
+        self._user_id       = user_id
+        self._cloud_id      = cloud_id
         self._base_candidates = self._build_base_candidates(base_url)
+        # {project_key → {name_lower: display_name}} – populated on first 400 issuetype
+        self._issue_type_cache: Dict[str, Dict[str, str]] = {}
 
     # ── Factory ───────────────────────────────────────────────────────────────
 
@@ -127,6 +148,10 @@ class JiraService:
                 project=settings.jira_project_key,
                 auth_mode="oauth",
                 cloud_url=token.cloud_url,
+                refresh_token=token.refresh_token or "",
+                db=db,
+                user_id=user_id,
+                cloud_id=token.cloud_id or "",
             )
 
         # Second fallback — user-supplied PAT credentials stored in DB
@@ -178,6 +203,61 @@ class JiraService:
             auth_mode="apikey",
         )
 
+    # ── Token refresh ─────────────────────────────────────────────────────────
+
+    async def _try_refresh_token(self) -> bool:
+        """
+        Attempt to refresh the Atlassian OAuth access token using the stored
+        refresh_token.  On success, updates self._headers and persists the new
+        tokens to the DB.  Returns True if the refresh succeeded.
+        """
+        if self._auth_mode != "oauth" or not self._refresh_token:
+            return False
+        if not settings.atlassian_client_id or not settings.atlassian_client_secret:
+            return False
+
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://auth.atlassian.com/oauth/token",
+                    json={
+                        "grant_type":    "refresh_token",
+                        "client_id":     settings.atlassian_client_id,
+                        "client_secret": settings.atlassian_client_secret,
+                        "refresh_token": self._refresh_token,
+                    },
+                    headers={"Content-Type": "application/json"},
+                    timeout=15,
+                )
+                if not resp.is_success:
+                    logger.warning("Token refresh failed: %s %s", resp.status_code, resp.text)
+                    return False
+
+                data = resp.json()
+                new_access  = data["access_token"]
+                new_refresh = data.get("refresh_token", self._refresh_token)
+
+            # Update in-memory auth header
+            self._headers["Authorization"] = f"Bearer {new_access}"
+            self._refresh_token = new_refresh
+
+            # Persist to DB if we have the context
+            if self._db and self._user_id:
+                await upsert_oauth_connection(
+                    self._db,
+                    self._user_id,
+                    "jira",
+                    access_token=new_access,
+                    refresh_token=new_refresh,
+                    cloud_id=self._cloud_id,
+                    cloud_url=self._cloud_url,
+                )
+            logger.info("Atlassian OAuth token refreshed for user %s", self._user_id)
+            return True
+        except Exception as exc:
+            logger.warning("Token refresh error: %s", exc)
+            return False
+
     # ── URL helpers ───────────────────────────────────────────────────────────
 
     def _browse_url(self, key: str) -> str:
@@ -201,6 +281,85 @@ class JiraService:
             candidates.append(f"{normalized}/jira")
         return candidates
 
+    # ── Issue-type resolution ─────────────────────────────────────────────────
+
+    async def fetch_issue_types(self, project_key: str) -> Dict[str, str]:
+        """
+        Return available issue types for *project_key* as {name_lower: display_name}.
+        Results are cached for the lifetime of this service instance.
+        Falls back to the global issue-type list when the project endpoint is unavailable.
+        """
+        if project_key in self._issue_type_cache:
+            return self._issue_type_cache[project_key]
+
+        # Primary: project-level types (most accurate)
+        try:
+            data = await self._get(f"/rest/api/3/project/{project_key}")
+            types = data.get("issueTypes", []) if isinstance(data, dict) else []
+            if types:
+                result = {t["name"].lower(): t["name"] for t in types if t.get("name")}
+                self._issue_type_cache[project_key] = result
+                return result
+        except Exception:
+            pass
+
+        # Fallback: global issue-type list
+        try:
+            types = await self._get("/rest/api/3/issuetype")
+            if isinstance(types, list) and types:
+                result = {t["name"].lower(): t["name"] for t in types if t.get("name")}
+                self._issue_type_cache[project_key] = result
+                return result
+        except Exception:
+            pass
+
+        return {}
+
+    @staticmethod
+    def _resolve_issue_type(preferred: str, available: Dict[str, str]) -> str:
+        """
+        Find the best available Jira issue-type name for *preferred*.
+
+        Tries (in order):
+          1. Exact match (case-insensitive)
+          2. Known aliases from _TYPE_ALIASES
+          3. Returns *preferred* unchanged so the caller can decide whether to retry.
+        """
+        key = preferred.lower()
+        if key in available:
+            return available[key]
+        for alias in _TYPE_ALIASES.get(key, []):
+            if alias in available:
+                return available[alias]
+        return preferred
+
+    async def _retry_with_resolved_type(self, fields: dict, preferred_type: str) -> str:
+        """
+        After a 'issuetype' 400, fetch available types for the project, pick the
+        best match, and retry *once*.  Raises a descriptive RuntimeError if no
+        better type can be found.
+        """
+        project_key = fields.get("project", {}).get("key", self._project)
+        available = await self.fetch_issue_types(project_key)
+        if not available:
+            raise RuntimeError(
+                f"JIRA: issue type '{preferred_type}' was rejected and the available "
+                f"types for project '{project_key}' could not be retrieved. "
+                "Check JIRA_EPIC_TYPE / JIRA_STORY_TYPE / JIRA_SUBTASK_TYPE in .env."
+            )
+        resolved = self._resolve_issue_type(preferred_type, available)
+        if resolved.lower() == preferred_type.lower():
+            raise RuntimeError(
+                f"JIRA: issue type '{preferred_type}' not found in project '{project_key}'. "
+                f"Available types: {', '.join(sorted(available.values()))}. "
+                "Set JIRA_EPIC_TYPE / JIRA_STORY_TYPE / JIRA_SUBTASK_TYPE in .env to match."
+            )
+        logger.info(
+            "Resolved issue type '%s' → '%s' for project %s",
+            preferred_type, resolved, project_key,
+        )
+        return await self._create_issue({**fields, "issuetype": {"name": resolved}})
+
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 
     def _client_kwargs(self) -> dict:
@@ -221,34 +380,46 @@ class JiraService:
         """
         Issue a Jira request against known base candidates.
 
-        Retry 404s against an alternate `/jira` context path for self-hosted installs.
-        When a fallback succeeds, keep that base for later requests.
+        - Retries 404s against an alternate `/jira` context path for self-hosted installs.
+        - On 401 in OAuth mode, attempts a token refresh once and retries the request.
         """
         last_error: Optional[Exception] = None
         method_name = method.upper()
-        async with httpx.AsyncClient(**self._client_kwargs()) as client:
-            for candidate in self._base_candidates:
-                try:
-                    response = await client.request(
-                        method_name,
-                        f"{candidate}{path}",
-                        params=params,
-                        json=body,
-                        timeout=timeout,
-                    )
-                    response.raise_for_status()
-                    if candidate != self._base_url:
-                        logger.info("Resolved Jira base URL fallback: %s -> %s", self._base_url, candidate)
-                        self._base_url = candidate
-                        self._base_candidates = self._build_base_candidates(candidate)
-                    return response.json()
-                except httpx.HTTPStatusError as exc:
-                    last_error = exc
-                    if exc.response.status_code != 404 or candidate == self._base_candidates[-1]:
+
+        for attempt in range(2):  # attempt 0 = normal, attempt 1 = after token refresh
+            async with httpx.AsyncClient(**self._client_kwargs()) as client:
+                for candidate in self._base_candidates:
+                    try:
+                        response = await client.request(
+                            method_name,
+                            f"{candidate}{path}",
+                            params=params,
+                            json=body,
+                            timeout=timeout,
+                        )
+                        response.raise_for_status()
+                        if candidate != self._base_url:
+                            logger.info("Resolved Jira base URL fallback: %s -> %s", self._base_url, candidate)
+                            self._base_url = candidate
+                            self._base_candidates = self._build_base_candidates(candidate)
+                        return response.json()
+                    except httpx.HTTPStatusError as exc:
+                        last_error = exc
+                        if exc.response.status_code == 401 and attempt == 0:
+                            # Try refreshing the OAuth token and retry the whole request
+                            refreshed = await self._try_refresh_token()
+                            if refreshed:
+                                break  # break inner loop → outer loop retries with new token
+                            raise
+                        if exc.response.status_code != 404 or candidate == self._base_candidates[-1]:
+                            raise
+                    except Exception as exc:
+                        last_error = exc
                         raise
-                except Exception as exc:
-                    last_error = exc
-                    raise
+                else:
+                    # Inner loop completed without a break → no refresh needed, we're done
+                    break
+
         if last_error:
             raise last_error
         raise RuntimeError("JIRA request failed without a response")
@@ -260,8 +431,16 @@ class JiraService:
         try:
             data = await self._request_json("POST", path, body=body, timeout=15)
         except httpx.HTTPStatusError as exc:
-            logger.error("JIRA POST %s failed %s: %s", path, exc.response.status_code, exc.response.text)
-            raise
+            # Parse Jira's error JSON so callers (and logs) see the exact field errors.
+            try:
+                jira_err = exc.response.json()
+                msgs  = jira_err.get("errorMessages", [])
+                errs  = jira_err.get("errors", {})
+                detail = "; ".join(msgs + [f"{k}: {v}" for k, v in errs.items()])
+            except Exception:
+                detail = exc.response.text[:500]
+            logger.error("JIRA POST %s → %s: %s", path, exc.response.status_code, detail)
+            raise RuntimeError(f"JIRA {exc.response.status_code}: {detail}") from exc
         if not isinstance(data, dict):
             raise RuntimeError(f"Unexpected JIRA response payload for POST {path}")
         return data
@@ -269,13 +448,28 @@ class JiraService:
     # ── User lookup ───────────────────────────────────────────────────────────
 
     async def get_account_id(self, email: str) -> Optional[str]:
-        """Resolve JIRA account ID from an email address."""
-        users = await self._get("/rest/api/3/user/search", params={"query": email})
-        if isinstance(users, list) and users:
-            logger.debug("Resolved %s → %s", email, users[0]["accountId"])
-            return users[0]["accountId"]
-        logger.warning("No JIRA user found for email: %s", email)
-        return None
+        """
+        Resolve JIRA account ID from an email address.
+
+        Returns None (rather than raising) if the lookup fails so that ticket
+        creation can proceed without an assignee.  A missing `read:jira-user`
+        scope or an unrecognised email are the most common reasons for failure.
+        """
+        try:
+            users = await self._get("/rest/api/3/user/search", params={"query": email})
+            if isinstance(users, list) and users:
+                logger.debug("Resolved %s → %s", email, users[0]["accountId"])
+                return users[0]["accountId"]
+            logger.warning("No JIRA user found for email: %s", email)
+            return None
+        except Exception as exc:
+            logger.warning(
+                "get_account_id failed for %s — tickets will be created without an assignee. "
+                "If this is a 401, ensure the JIRA OAuth app has the 'read:jira-user' scope "
+                "and re-connect via the JIRA settings page. Error: %s",
+                email, exc,
+            )
+            return None
 
     async def get_display_name(self, account_id: str) -> str:
         data = await self._get("/rest/api/3/user", params={"accountId": account_id})
@@ -303,27 +497,65 @@ class JiraService:
         raise last_exc  # type: ignore[misc]
 
     async def create_epic(self, title: str, description: str, account_id: Optional[str], project: str = "") -> str:
+        summary = f"[PRD] {title}"
         fields: dict = {
-            "project":   {"key": project or self._project},
-            "issuetype": {"name": settings.jira_epic_type},
-            "summary":   f"[PRD] {title}",
+            "project":            {"key": project or self._project},
+            "issuetype":          {"name": settings.jira_epic_type},
+            "summary":            summary,
+            # customfield_10011 = Epic Name, required in company-managed (classic) projects.
+            # Team-managed projects don't have this field — we retry without it on 400.
+            "customfield_10011":  title,
         }
         if description:
             fields["description"] = _adf(description)
         if account_id:
             fields["assignee"] = {"accountId": account_id}
-        return await self._create_issue(fields)
+        try:
+            return await self._create_issue(fields)
+        except RuntimeError as exc:
+            err = str(exc)
+            if "customfield_10011" in err:
+                logger.info("Retrying Epic creation without customfield_10011 (team-managed project)")
+                fields.pop("customfield_10011", None)
+                try:
+                    return await self._create_issue(fields)
+                except RuntimeError as exc2:
+                    if "issuetype" in str(exc2).lower():
+                        return await self._retry_with_resolved_type(fields, settings.jira_epic_type)
+                    raise
+            if "issuetype" in err.lower():
+                return await self._retry_with_resolved_type(fields, settings.jira_epic_type)
+            raise
 
     async def create_story(self, title: str, epic_key: str, account_id: Optional[str], project: str = "") -> str:
         fields: dict = {
             "project":   {"key": project or self._project},
             "issuetype": {"name": settings.jira_story_type},
             "summary":   title,
+            # `parent` works for team-managed and modern company-managed projects.
+            # Classic projects may require customfield_10014 (Epic Link) — see fallback below.
             "parent":    {"key": epic_key},
         }
         if account_id:
             fields["assignee"] = {"accountId": account_id}
-        return await self._create_issue(fields)
+        try:
+            return await self._create_issue(fields)
+        except RuntimeError as exc:
+            err = str(exc)
+            if "parent" in err.lower() or "customfield_10014" in err.lower() or "field" in err.lower():
+                logger.info("Retrying Story creation with customfield_10014 epic link (classic project)")
+                fallback = {**fields}
+                fallback.pop("parent", None)
+                fallback["customfield_10014"] = epic_key
+                try:
+                    return await self._create_issue(fallback)
+                except RuntimeError as exc2:
+                    if "issuetype" in str(exc2).lower():
+                        return await self._retry_with_resolved_type(fallback, settings.jira_story_type)
+                    raise
+            if "issuetype" in err.lower():
+                return await self._retry_with_resolved_type(fields, settings.jira_story_type)
+            raise
 
     async def create_subtask(self, title: str, parent_key: str, account_id: Optional[str], project: str = "") -> str:
         fields: dict = {
@@ -334,7 +566,12 @@ class JiraService:
         }
         if account_id:
             fields["assignee"] = {"accountId": account_id}
-        return await self._create_issue(fields)
+        try:
+            return await self._create_issue(fields)
+        except RuntimeError as exc:
+            if "issuetype" in str(exc).lower():
+                return await self._retry_with_resolved_type(fields, settings.jira_subtask_type)
+            raise
 
     # ── Board & project discovery ─────────────────────────────────────────────
 
@@ -430,6 +667,32 @@ class JiraService:
                 return projects
             start_at += len(values)
 
+    # ── Epic search ───────────────────────────────────────────────────────────
+
+    async def search_epics(self, project_key: str, max_results: int = 20) -> List[dict]:
+        """
+        Return existing Epics in a project via JQL (newest first).
+        Used to populate the parent-epic selector in the HITL form.
+        Returns [{key, summary}], empty list on any error.
+        """
+        epic_type = settings.jira_epic_type
+        try:
+            data = await self._get(
+                "/rest/api/3/search",
+                params={
+                    "jql":        f'project = "{project_key}" AND issuetype = "{epic_type}" ORDER BY created DESC',
+                    "maxResults": max_results,
+                    "fields":     "summary,status",
+                },
+            )
+            return [
+                {"key": issue["key"], "summary": issue["fields"]["summary"]}
+                for issue in (data.get("issues", []) if isinstance(data, dict) else [])
+            ]
+        except Exception as exc:
+            logger.warning("search_epics failed for project '%s': %s", project_key, exc)
+            return []
+
     # ── Full PRD → JIRA hierarchy ─────────────────────────────────────────────
 
     async def create_from_prd(
@@ -439,11 +702,17 @@ class JiraService:
         assignee_email: str,
         project_key: str = "",
         progress_cb=None,
+        # User-supplied overrides from the HITL approval form
+        epic_title_override: str = "",
+        epic_description_override: str = "",
+        parent_epic_key: str = "",       # if set, skip creating a new Epic
     ) -> dict:
         """
         Epic → Stories (all FRs) → Subtasks (all TCs under each story).
 
         project_key overrides self._project when non-empty.
+        epic_title_override / epic_description_override replace the PRD-extracted values.
+        parent_epic_key: attach Stories to an existing Epic instead of creating a new one.
         progress_cb: optional callable(current: int, total: int) called before each story.
         Returns: {epic_key, epic_url, task_keys, assignee_name, auth_mode, cloud_url}
         """
@@ -454,12 +723,19 @@ class JiraService:
         if account_id:
             assignee_name = await self.get_display_name(account_id)
 
-        epic_key = await self.create_epic(
-            title=items["epic_title"],
-            description=items["epic_description"],
-            account_id=account_id,
-            project=proj,
-        )
+        if parent_epic_key.strip():
+            # User chose to link Stories to an existing Epic — skip creation.
+            epic_key = parent_epic_key.strip()
+            logger.info("Using existing Epic %s (user-selected) instead of creating a new one", epic_key)
+        else:
+            title       = epic_title_override.strip() or items["epic_title"]
+            description = epic_description_override.strip() or items["epic_description"]
+            epic_key = await self.create_epic(
+                title=title,
+                description=description,
+                account_id=account_id,
+                project=proj,
+            )
 
         task_keys: list[str] = []
         total_stories = len(items["tasks"])

@@ -1,5 +1,5 @@
 // components/history/History.tsx
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
@@ -16,6 +16,8 @@ import {
   TestTube,
   Search,
   X,
+  FolderOpen,
+  AlertTriangle,
 } from 'lucide-react';
 import type { PRDDocument } from '../../types';
 
@@ -38,24 +40,42 @@ const gradeBg: Record<string, string> = {
 export function History() {
   const navigate  = useNavigate();
   const { dispatch } = useApp();
-  const [search, setSearch]         = useState('');
+  const [search, setSearch]             = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
 
   // Always read fresh from localStorage so deletions reflect immediately
   const [history, setHistory] = useState<PRDDocument[]>(() => api.getPRDHistory());
 
-  const filtered = search.trim()
-    ? history.filter(p =>
-        p.title.toLowerCase().includes(search.toLowerCase()) ||
-        p.fileName?.toLowerCase().includes(search.toLowerCase())
-      )
-    : history;
+  const filtered = useMemo(() => {
+    if (!search.trim()) return history;
+    const q = search.toLowerCase();
+    return history.filter(p =>
+      p.title.toLowerCase().includes(q) ||
+      p.fileName?.toLowerCase().includes(q),
+    );
+  }, [history, search]);
+
+  // Group PRDs by project title, each group sorted newest-first.
+  // Groups themselves sorted by most recent PRD date.
+  const groups = useMemo(() => {
+    const map = new Map<string, PRDDocument[]>();
+    for (const prd of filtered) {
+      const key = prd.title;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(prd);
+    }
+    for (const prds of map.values()) {
+      prds.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    return [...map.entries()].sort(
+      ([, a], [, b]) => new Date(b[0].createdAt).getTime() - new Date(a[0].createdAt).getTime(),
+    );
+  }, [filtered]);
 
   const handleDelete = (id: string) => {
     const updated = history.filter(p => p.id !== id);
     api.replacePRDHistory(updated);
     setHistory(updated);
-    // Sync context so Dashboard stays accurate
     dispatch({ type: 'SET_CURRENT_PRD', payload: null });
   };
 
@@ -70,10 +90,8 @@ export function History() {
     navigate(`/prd/${prd.id}`);
   };
 
-  const handleResumeSession = (prd: PRDDocument) => {
-    if (!prd.sessionId) return;
-    // Opens a new tab (or switches to an existing one) with this session
-    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId: prd.sessionId, label: prd.title } });
+  const handleViewSession = (sessionId: string, label: string) => {
+    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId, label } });
     navigate('/');
   };
 
@@ -81,6 +99,8 @@ export function History() {
     new Date(d).toLocaleDateString('en-US', {
       month: 'short', day: 'numeric', year: 'numeric',
     });
+
+  const totalCount = history.length;
 
   return (
     <div className="space-y-6">
@@ -93,7 +113,7 @@ export function History() {
           <div>
             <h1 className="text-2xl font-bold text-text-primary">Conversation History</h1>
             <p className="text-sm text-text-muted">
-              {history.length} PRD{history.length !== 1 ? 's' : ''} generated
+              {totalCount} PRD{totalCount !== 1 ? 's' : ''} generated
             </p>
           </div>
         </div>
@@ -165,84 +185,152 @@ export function History() {
         </Card>
       )}
 
-      {/* History list */}
-      <div className="space-y-3">
-        {filtered.map(prd => (
-          <Card
-            key={prd.id}
-            className={`border-l-4 ${gradeBg[prd.grade] ?? 'border-l-text-muted'} hover:border-white/20 transition-colors cursor-pointer`}
-            onClick={() => handleOpen(prd)}
-          >
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-4">
+      {/* Grouped history */}
+      <div className="space-y-6">
+        {groups.map(([title, prds]) => {
+          // Session link uses the most recent non-deprecated PRD's sessionId,
+          // falling back to the first deprecated one if all are deprecated.
+          const sessionPrd = prds.find(p => !p.deprecated) ?? prds[0];
+          const hasMultiple = prds.length > 1;
 
-                {/* Left: icon + info */}
-                <div className="flex items-start gap-4 min-w-0 flex-1">
-                  <div className="w-10 h-10 rounded-xl bg-background-secondary border border-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <FileText className="w-5 h-5 text-text-secondary" />
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="font-semibold text-text-primary truncate">{prd.title}</h3>
-                    <p className="text-xs text-text-muted mt-0.5 truncate">
-                      {prd.fileName || `${prd.title.toLowerCase().replace(/\s+/g, '_')}.md`}
-                    </p>
-
-                    {/* Meta row */}
-                    <div className="flex items-center flex-wrap gap-3 mt-2">
-                      <span className={`px-2 py-0.5 rounded-md text-xs font-bold border flex items-center gap-1 ${gradeColors[prd.grade] ?? gradeColors.F}`}>
-                        <Award className="w-3 h-3" />
-                        {prd.grade} · {prd.qualityScore}/100
-                      </span>
-                      <span className="flex items-center gap-1 text-xs text-text-muted">
-                        <TestTube className="w-3 h-3" />
-                        {prd.testCaseCount} test cases
-                      </span>
-                      <span className="flex items-center gap-1 text-xs text-text-muted">
-                        <Calendar className="w-3 h-3" />
-                        {formatDate(prd.createdAt)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Right: actions */}
-                <div
-                  className="flex items-center gap-1 flex-shrink-0"
-                  onClick={e => e.stopPropagation()}
-                >
-                  {prd.sessionId && (
+          return (
+            <div key={title} className="space-y-2">
+              {/* Group header — only shown when there are multiple versions */}
+              {hasMultiple && (
+                <div className="flex items-center gap-2 px-1">
+                  <FolderOpen className="w-4 h-4 text-text-muted flex-shrink-0" />
+                  <span className="text-sm font-semibold text-text-secondary truncate flex-1">
+                    {title}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    {prds.length} version{prds.length !== 1 ? 's' : ''}
+                  </span>
+                  {sessionPrd.sessionId && (
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => handleResumeSession(prd)}
-                      title="Resume this session in chat"
+                      onClick={() => handleViewSession(sessionPrd.sessionId!, title)}
+                      title="Open chat session"
+                      className="text-text-muted hover:text-primary-light"
                     >
-                      <MessageSquare className="w-4 h-4" />
+                      <MessageSquare className="w-3.5 h-3.5 mr-1" />
+                      <span className="text-xs">View Chat</span>
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleOpen(prd)}
-                    title="View PRD"
-                  >
-                    <ExternalLink className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDelete(prd.id)}
-                    title="Delete"
-                    className="text-text-muted hover:text-status-error"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
                 </div>
+              )}
 
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              {/* PRD cards within the group */}
+              {prds.map((prd, idx) => {
+                const versionLabel = prd.version ?? (prds.length - idx);
+                const isDeprecated = Boolean(prd.deprecated);
+
+                return (
+                  <Card
+                    key={prd.id}
+                    className={`border-l-4 ${
+                      isDeprecated
+                        ? 'border-l-text-muted opacity-70'
+                        : gradeBg[prd.grade] ?? 'border-l-text-muted'
+                    } hover:border-white/20 transition-colors cursor-pointer ${
+                      hasMultiple ? 'ml-6' : ''
+                    }`}
+                    onClick={() => handleOpen(prd)}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-4">
+
+                        {/* Left: icon + info */}
+                        <div className="flex items-start gap-4 min-w-0 flex-1">
+                          <div className="w-10 h-10 rounded-xl bg-background-secondary border border-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            {isDeprecated
+                              ? <AlertTriangle className="w-5 h-5 text-amber-400/70" />
+                              : <FileText className="w-5 h-5 text-text-secondary" />
+                            }
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-semibold text-text-primary truncate">{prd.title}</h3>
+                              {hasMultiple && (
+                                <span className="text-[10px] font-medium text-text-muted bg-white/5 border border-white/10 rounded px-1.5 py-0.5 flex-shrink-0">
+                                  v{versionLabel}
+                                </span>
+                              )}
+                              {isDeprecated && (
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 uppercase tracking-wide flex-shrink-0">
+                                  Deprecated
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-text-muted mt-0.5 truncate">
+                              {prd.fileName || `${prd.title.toLowerCase().replace(/\s+/g, '_')}.md`}
+                            </p>
+
+                            {/* Meta row */}
+                            <div className="flex items-center flex-wrap gap-3 mt-2">
+                              <span className={`px-2 py-0.5 rounded-md text-xs font-bold border flex items-center gap-1 ${
+                                isDeprecated
+                                  ? 'text-text-muted bg-white/5 border-white/10'
+                                  : gradeColors[prd.grade] ?? gradeColors.F
+                              }`}>
+                                <Award className="w-3 h-3" />
+                                {prd.grade} · {prd.qualityScore}/100
+                              </span>
+                              <span className="flex items-center gap-1 text-xs text-text-muted">
+                                <TestTube className="w-3 h-3" />
+                                {prd.testCaseCount} test cases
+                              </span>
+                              <span className="flex items-center gap-1 text-xs text-text-muted">
+                                <Calendar className="w-3 h-3" />
+                                {formatDate(prd.createdAt)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right: actions */}
+                        <div
+                          className="flex items-center gap-1 flex-shrink-0"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          {/* Session link only on single-PRD groups (multi-version groups show it in header) */}
+                          {!hasMultiple && prd.sessionId && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleViewSession(prd.sessionId!, prd.title)}
+                              title="Resume this session in chat"
+                            >
+                              <MessageSquare className="w-4 h-4" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleOpen(prd)}
+                            title="View PRD"
+                          >
+                            <ExternalLink className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDelete(prd.id)}
+                            title={isDeprecated ? 'Remove deprecated version' : 'Delete'}
+                            className="text-text-muted hover:text-status-error"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
