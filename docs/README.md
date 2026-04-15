@@ -26,6 +26,7 @@ This directory is the engineer-facing source of truth for the current repository
 
 - [Roadmap and Known Gaps](/Users/sadat.sayem/TeamSyncV2/n8nProjects/v1.1/docs/roadmap-and-known-gaps.md)
 - [Backend Plan](/Users/sadat.sayem/TeamSyncV2/n8nProjects/v1.1/BACKEND_PLAN.md)
+- [ACL + Integration Center Plan](/Users/sadat.sayem/ESDD-AI-Com/n8nProjects/v1.1/team-syncv2.0-fullstack/docs/acl-integration-center-plan.md)
 
 ## Current Documentation Model
 
