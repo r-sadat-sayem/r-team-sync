@@ -271,7 +271,7 @@ function ProjectDetail({
 export function ProjectsPage() {
   const navigate = useNavigate();
   const { key } = useParams<{ key?: string }>();
-  const { state } = useApp();
+  const { state, jiraConnectionLoading } = useApp();
   const jira = state.jiraConnection;
   const cloud = cloudBase(jira?.project_url, jira?.cloud_name);
 
@@ -315,6 +315,22 @@ export function ProjectsPage() {
         projectType={proj?.projectTypeKey}
         defaultPrd={defaultPrd}
       />
+    );
+  }
+
+  // ── Loading connection status ────────────────────────────────────────────
+  if (jiraConnectionLoading) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold text-text-primary flex items-center gap-3">
+          <Folders className="w-6 h-6 text-primary-light" />
+          Projects
+        </h1>
+        <div className="flex items-center gap-3 text-text-secondary py-8">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          Checking JIRA connection…
+        </div>
+      </div>
     );
   }
 

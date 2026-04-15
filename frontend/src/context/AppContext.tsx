@@ -200,6 +200,8 @@ interface AppContextType {
   activeTab: ChatTab;
   /** Refresh global JIRA connection status from the server */
   refreshJiraConnection: () => Promise<void>;
+  /** True while the initial jiraConnection status fetch is in flight */
+  jiraConnectionLoading: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -207,13 +209,17 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(appReducer, initialState);
   const { user, isLoading } = useAuth();
+  const [jiraConnectionLoading, setJiraConnectionLoading] = React.useState(true);
 
   const refreshJiraConnection = useCallback(async () => {
+    setJiraConnectionLoading(true);
     try {
       const status = await api.getUserJiraStatus();
       dispatch({ type: 'SET_JIRA_CONNECTION', payload: status });
     } catch {
       dispatch({ type: 'SET_JIRA_CONNECTION', payload: null });
+    } finally {
+      setJiraConnectionLoading(false);
     }
   }, []);
 
@@ -221,6 +227,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
     if (!user) {
       dispatch({ type: 'RESET_STATE' });
+      setJiraConnectionLoading(false);
       return;
     }
 
@@ -241,7 +248,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const activeTab = state.tabs.find(t => t.id === state.activeTabId) ?? state.tabs[0];
 
   return (
-    <AppContext.Provider value={{ state, dispatch, activeTab, refreshJiraConnection }}>
+    <AppContext.Provider value={{ state, dispatch, activeTab, refreshJiraConnection, jiraConnectionLoading }}>
       {children}
     </AppContext.Provider>
   );

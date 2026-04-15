@@ -244,6 +244,169 @@ def _slugify(text: str, max_len: int = 40) -> str:
     return slug[:max_len] or "prd_document"
 
 
+# ── Prompts for outline + test-cases nodes ────────────────────────────────────
+
+OUTLINE_SYSTEM = """\
+You are DevBridge, an expert PRD generator. Based on the requirements context below, \
+produce a concise PRD outline: 8-12 bullet points covering the key sections and major \
+decisions that will appear in the full document. Use clear, action-oriented language. \
+Format as a markdown bullet list — no preamble, no closing remarks.\
+"""
+
+TEST_CASES_SYSTEM = """\
+You are a senior QA engineer. Generate a comprehensive test suite for the provided PRD.
+
+OUTPUT FORMAT — test cases only, no preamble:
+
+## Happy Path
+
+**TC001: [Core workflow description]**
+- Steps: 1. ... 2. ...
+- Expected: ...
+- Priority: Critical
+
+[continue to TC015 minimum — aim for TC020]
+
+## Edge Cases
+
+**TC101: [Edge condition]**
+- Steps: ...
+- Expected: [graceful handling]
+
+[minimum 5 edge case TCs]
+
+RULES:
+- Every FR must have at least one TC.
+- Use TC001-TC099 for happy path, TC101+ for edge cases.
+- Steps must be numbered and specific.
+- Expected results must be verifiable.\
+"""
+
+
+# ── Node: generate_prd_outline ───────────────────────────────────────────────
+
+async def generate_prd_outline(state: PRDState) -> dict:
+    """
+    Generate a brief PRD outline that the user reviews before full PRD generation.
+    Streams tokens so the user can see the outline forming in real time.
+    ChatInterface detects the 'Planning PRD outline...' status to start token accumulation.
+    """
+    writer  = get_stream_writer()
+    model   = _make_model(max_tokens=512, temperature=0.3)
+
+    writer({"type": "status", "message": "Planning PRD outline..."})
+
+    prompt  = (
+        "Create a concise PRD outline based on these requirements:\n\n"
+        + state.get("context_summary", "")
+    )
+    lc_msgs = _to_lc_messages(
+        [{"role": "user", "content": prompt}],
+        OUTLINE_SYSTEM,
+    )
+
+    full_text = ""
+    async for chunk in model.astream(lc_msgs):
+        text = _extract_chunk_text(chunk)
+        if text:
+            full_text += text
+            writer({"type": "token", "content": text})
+
+    logger.info("generate_prd_outline: length=%d", len(full_text))
+    return {"prd_outline": full_text}
+
+
+# ── Node: prd_outline_interrupt ───────────────────────────────────────────────
+
+def prd_outline_interrupt(state: PRDState) -> dict:
+    """
+    Present the generated outline for user review.
+    Sets pending_interrupt in state (state-field pattern) so _pending_interrupt_payload
+    can detect it. The graph then proceeds to END; the frontend renders InlinePRDOutlineForm.
+    """
+    return {
+        "pending_interrupt": {
+            "form":    "prd_outline_form",
+            "message": "Here's the PRD outline. Approve to generate the full document, or request changes.",
+            "outline": state.get("prd_outline", ""),
+            "fields":  ["decision", "feedback"],
+        }
+    }
+
+
+# ── Node: post_prd_interrupt ──────────────────────────────────────────────────
+
+def post_prd_interrupt(state: PRDState) -> dict:
+    """
+    Present the post-PRD action menu (Email / Test Cases / JIRA / Done).
+    Uses state-field pattern so _pending_interrupt_payload detects it.
+    The frontend renders InlineActionMenu with actions_taken to mark completed items.
+    """
+    return {
+        "pending_interrupt": {
+            "form":         "post_prd_actions",
+            "message":      "What would you like to do with your PRD?",
+            "fields":       ["action"],
+            "score":        state.get("quality_score", 0),
+            "grade":        state.get("grade", ""),
+            "file_name":    state.get("file_name", ""),
+            "actions_taken": list(state.get("actions_taken", [])),
+        }
+    }
+
+
+# ── Node: generate_test_cases ─────────────────────────────────────────────────
+
+async def generate_test_cases(state: PRDState) -> dict:
+    """
+    Generate comprehensive Happy Path + Edge Case test cases from the PRD.
+    ChatInterface detects 'Generating test cases...' status to start TC token accumulation.
+    """
+    writer  = get_stream_writer()
+    model   = _make_model(max_tokens=4096, temperature=0.2)
+
+    writer({"type": "status", "message": "Generating test cases..."})
+
+    prd     = state.get("prd_markdown", "")
+    prompt  = "Generate a full test suite for this PRD:\n\n" + prd[:6000]
+    lc_msgs = _to_lc_messages(
+        [{"role": "user", "content": prompt}],
+        TEST_CASES_SYSTEM,
+    )
+
+    full_text = ""
+    async for chunk in model.astream(lc_msgs):
+        text = _extract_chunk_text(chunk)
+        if text:
+            full_text += text
+            writer({"type": "token", "content": text})
+
+    logger.info("generate_test_cases: length=%d", len(full_text))
+    return {"test_cases_markdown": full_text}
+
+
+# ── Node: validate_test_cases ─────────────────────────────────────────────────
+
+def validate_test_cases(state: PRDState) -> dict:
+    """
+    Count test cases, derive a file name, and emit the test_cases_complete SSE event.
+    Synchronous — no LLM call needed.
+    """
+    writer   = get_stream_writer()
+    markdown = state.get("test_cases_markdown", "")
+    tc_count = len(re.findall(r"\bTC\d{2,}\b", markdown))
+
+    ctx       = state.get("context_summary", "")
+    proj      = re.search(r"Project:\s*([^\n\r-]+)", ctx)
+    raw_name  = proj.group(1).strip() if proj else "test_cases"
+    file_name = f"{_slugify(raw_name)}_tests_{date.today().isoformat()}.md"
+
+    logger.info("validate_test_cases: tc_count=%d file=%s", tc_count, file_name)
+    writer({"type": "test_cases_complete", "file_name": file_name, "tc_count": tc_count})
+
+    return {"test_cases_file_name": file_name, "actions_taken": ["test_cases"]}
+
+
 # ── Node: analyze ─────────────────────────────────────────────────────────────
 
 async def analyze(state: PRDState) -> dict:
@@ -434,7 +597,7 @@ async def send_email(state: PRDState, config: RunnableConfig) -> dict:
     )
 
     writer({"type": "email_sent", "recipient": recipient_email})
-    return {}
+    return {"actions_taken": ["email"]}
 
 
 # ── Node: jira_interrupt ──────────────────────────────────────────────────────
@@ -527,7 +690,8 @@ async def create_jira(state: PRDState, config: RunnableConfig) -> dict:
         writer({"type": "notification_sent", "to": state["jira_assignee_email"]})
 
     return {
-        "epic_key":  result["epic_key"],
-        "epic_url":  result["epic_url"],
-        "task_keys": result["task_keys"],
+        "epic_key":      result["epic_key"],
+        "epic_url":      result["epic_url"],
+        "task_keys":     result["task_keys"],
+        "actions_taken": ["jira"],
     }

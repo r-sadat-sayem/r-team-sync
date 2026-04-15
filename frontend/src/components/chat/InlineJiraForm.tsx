@@ -31,6 +31,7 @@ export function InlineJiraForm({ interrupt, sessionId, isLoading, onSubmit }: Pr
     globalJira?.cloud_name ?? interrupt.jira_cloud ?? null,
   );
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
   const [notes, setNotes] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -79,6 +80,7 @@ export function InlineJiraForm({ interrupt, sessionId, isLoading, onSubmit }: Pr
 
   const handleConnect = async () => {
     setConnecting(true);
+    setConnectError('');
     try {
       const url = await api.getJiraConnectUrl(sessionId);
       const popup = window.open(url, 'jira-oauth', 'width=520,height=680,left=200,top=100');
@@ -86,7 +88,12 @@ export function InlineJiraForm({ interrupt, sessionId, isLoading, onSubmit }: Pr
         if (e.data?.type === 'jira_oauth') {
           window.removeEventListener('message', handler);
           popup?.close();
-          pollStatus();
+          if (e.data.success === false) {
+            setConnectError(e.data.message || 'JIRA OAuth failed. Check your Atlassian app callback URL and scopes.');
+            setConnecting(false);
+          } else {
+            pollStatus();
+          }
         }
       };
       window.addEventListener('message', handler);
@@ -97,7 +104,8 @@ export function InlineJiraForm({ interrupt, sessionId, isLoading, onSubmit }: Pr
           pollStatus();
         }
       }, 500);
-    } catch {
+    } catch (err: any) {
+      setConnectError(err.message || 'Failed to start JIRA OAuth. Is ATLASSIAN_CLIENT_ID configured?');
       setConnecting(false);
     }
   };
@@ -234,6 +242,9 @@ export function InlineJiraForm({ interrupt, sessionId, isLoading, onSubmit }: Pr
               : <><ExternalLink className="w-4 h-4 mr-2" />Connect JIRA</>
             }
           </Button>
+          {connectError && (
+            <p className="text-xs text-red-400">{connectError}</p>
+          )}
           <p className="text-xs text-text-muted text-center">
             or skip to finish without creating tickets
           </p>

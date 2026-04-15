@@ -27,9 +27,33 @@ def _sse(payload: dict) -> str:
 
 
 def _pending_interrupt_payload(snapshot) -> Optional[dict]:
+    """
+    Read the current frontend interrupt payload from the graph snapshot.
+
+    Handles two suspend patterns used in this codebase:
+
+    1. State-field pattern (prd_outline_interrupt, post_prd_interrupt):
+       The node sets state["pending_interrupt"] = {...} and goes to END.
+       The payload lives in snapshot.values["pending_interrupt"].
+
+    2. Native LangGraph interrupt (email_interrupt, jira_interrupt):
+       The node calls `interrupt(payload)` which truly suspends execution.
+       The payload lives in snapshot.tasks[i].interrupts[j].value.
+    """
+    # 1. State-field based interrupt
     values = getattr(snapshot, "values", None) or {}
     payload = values.get("pending_interrupt")
-    return payload if isinstance(payload, dict) and payload.get("form") else None
+    if isinstance(payload, dict) and payload.get("form"):
+        return payload
+
+    # 2. Native LangGraph interrupt
+    for task in getattr(snapshot, "tasks", []):
+        for intr in getattr(task, "interrupts", []):
+            val = getattr(intr, "value", None)
+            if isinstance(val, dict) and val.get("form"):
+                return val
+
+    return None
 
 
 def _build_resume_command(interrupt_payload: dict, form_data: dict):
@@ -88,7 +112,10 @@ def _build_resume_command(interrupt_payload: dict, form_data: dict):
         }
         if decision == "approve":
             return Command(update=update, goto="create_jira")
-        return Command(update=update)
+        # Skip: use goto="__end__" to bypass the suspended jira_interrupt node.
+        # Without goto, LangGraph would resume the node and interrupt() returns None,
+        # causing an AttributeError on the form_data.get() calls inside the node.
+        return Command(update=update, goto="__end__")
 
     if form == "post_prd_actions":
         action = form_data.get("action", "done").lower().strip()

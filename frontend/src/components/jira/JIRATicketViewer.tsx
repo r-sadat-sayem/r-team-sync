@@ -21,6 +21,7 @@ export function JIRATicketViewer() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showApprovalForm, setShowApprovalForm] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [connectError, setConnectError] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
   const [showPatForm, setShowPatForm] = useState(false);
   const [patForm, setPatForm] = useState({ base_url: '', username: '', api_token: '', project_key: '' });
@@ -40,6 +41,7 @@ export function JIRATicketViewer() {
 
   const handleConnect = async () => {
     setConnecting(true);
+    setConnectError('');
     try {
       const url = await api.getUserJiraConnectUrl();
       const popup = window.open(url, 'jira-oauth', 'width=520,height=680,left=200,top=100');
@@ -48,7 +50,12 @@ export function JIRATicketViewer() {
         if (e.data?.type === 'jira_oauth') {
           window.removeEventListener('message', handler);
           popup?.close();
-          void pollStatus();
+          if (e.data.success === false) {
+            setConnectError(e.data.message || 'JIRA OAuth failed. Check your Atlassian app callback URL and scopes.');
+            setConnecting(false);
+          } else {
+            void pollStatus();
+          }
         }
       };
       window.addEventListener('message', handler);
@@ -60,7 +67,8 @@ export function JIRATicketViewer() {
           void pollStatus();
         }
       }, 500);
-    } catch {
+    } catch (err: any) {
+      setConnectError(err.message || 'Failed to start JIRA OAuth. Is ATLASSIAN_CLIENT_ID configured?');
       setConnecting(false);
     }
   };
@@ -196,19 +204,24 @@ export function JIRATicketViewer() {
                 </Button>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={handleConnect} disabled={connecting}>
-                  {connecting
-                    ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Connecting…</>
-                    : <><Link2 className="w-4 h-4 mr-2" />Atlassian OAuth</>}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowPatForm(v => !v)}
-                >
-                  {showPatForm ? 'Cancel' : 'Use PAT'}
-                </Button>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <Button variant="secondary" size="sm" onClick={handleConnect} disabled={connecting}>
+                    {connecting
+                      ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Connecting…</>
+                      : <><Link2 className="w-4 h-4 mr-2" />Atlassian OAuth</>}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => { setShowPatForm(v => !v); setConnectError(''); }}
+                  >
+                    {showPatForm ? 'Cancel' : 'Use PAT'}
+                  </Button>
+                </div>
+                {connectError && (
+                  <p className="text-xs text-red-400 text-right max-w-xs">{connectError}</p>
+                )}
               </div>
             )}
           </div>

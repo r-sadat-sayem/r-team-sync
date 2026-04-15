@@ -132,11 +132,22 @@ class JiraService:
         # Second fallback — user-supplied PAT credentials stored in DB
         pat = await get_oauth_connection(db, user_id, "jira_pat") if user_id else None
         if pat:
-            project = pat.cloud_id or settings.jira_project_key
+            project  = pat.cloud_id or settings.jira_project_key
+            pat_base = pat.cloud_url.rstrip("/")
+            # refresh_token stores the verified auth method: "bearer" | "basic" | ""
+            # "bearer" → PAT on SSO/LDAP Jira (Basic auth disabled)
+            # "basic"  → username:password or username:PAT with Basic auth enabled
+            # ""       → legacy record saved before probe; default to Basic
+            if pat.refresh_token == "bearer":
+                pat_auth_headers: dict                    = {"Authorization": f"Bearer {pat.access_token}"}
+                pat_basic_auth: Optional[Tuple[str, str]] = None
+            else:
+                pat_auth_headers  = {}
+                pat_basic_auth    = (pat.account_email, pat.access_token)
             return cls(
-                base_url=pat.cloud_url.rstrip("/"),
-                auth_headers={},
-                basic_auth=(pat.account_email, pat.access_token),
+                base_url=pat_base,
+                auth_headers=pat_auth_headers,
+                basic_auth=pat_basic_auth,
                 project=project,
                 auth_mode="pat",
                 cloud_url=pat.cloud_url,

@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 _AUTH_URL      = "https://auth.atlassian.com/authorize"
 _TOKEN_URL     = "https://auth.atlassian.com/oauth/token"
 _RESOURCES_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
-_SCOPES        = "read:jira-work write:jira-work offline_access"
+_SCOPES        = "read:jira-work write:jira-work read:me offline_access"
 
 
 def _public_jira_base_url(fallback_url: Optional[str]) -> Optional[str]:
@@ -106,7 +106,7 @@ async def connect(
 @router.get("/callback", name="jira_oauth_callback", include_in_schema=False)
 async def callback(
     request: Request,
-    code: str = Query(...),
+    code: Optional[str] = Query(default=None),   # absent when Atlassian returns an error
     state: str = Query(...),     # session_id  OR  "user:{user_id}" for tab-level connect
     error: Optional[str] = Query(default=None),
     error_description: Optional[str] = Query(default=None),
@@ -127,6 +127,10 @@ async def callback(
             success=False,
             message=f"JIRA connection failed: {error_description or error}",
         )
+
+    if not code:
+        logger.warning("JIRA OAuth callback for session %s: no code and no error", state)
+        return _close_tab_html(success=False, message="JIRA connection failed: no authorisation code received.")
 
     callback_url = str(request.url_for("jira_oauth_callback"))
 
@@ -163,14 +167,24 @@ async def callback(
 
             cloud = resources[0]   # use first site; could let user choose in future
 
-            # 3. Fetch the user's own profile for display name / email
-            me_resp = await client.get(
+            # 3. Fetch the user's own profile for display name / email.
+            # Non-fatal — if read:me scope is missing the token is still stored.
+            me: dict = {}
+            for profile_url in [
+                "https://api.atlassian.com/me",
                 f"https://api.atlassian.com/ex/jira/{cloud['id']}/rest/api/3/myself",
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=10,
-            )
-            me_resp.raise_for_status()
-            me = me_resp.json()
+            ]:
+                try:
+                    me_resp = await client.get(
+                        profile_url,
+                        headers={"Authorization": f"Bearer {access_token}"},
+                        timeout=10,
+                    )
+                    if me_resp.is_success:
+                        me = me_resp.json()
+                        break
+                except Exception:
+                    pass
 
     except Exception as exc:
         logger.exception("JIRA OAuth callback failed for user %s: %s", current_user.id, exc)
@@ -279,30 +293,95 @@ async def me_save_pat(
     current_user: User = Depends(require_current_user),
     db: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    """Save user-supplied JIRA PAT credentials (for self-hosted / Data Center)."""
+    """
+    Save user-supplied JIRA PAT credentials and verify them before storing.
+    Returns 401 if the credentials are rejected by Jira so the UI can surface
+    a clear error rather than saving bad credentials that look "connected".
+    """
     base_url    = (payload.get("base_url") or "").strip().rstrip("/")
     username    = (payload.get("username") or "").strip()
     api_token   = (payload.get("api_token") or "").strip()
     project_key = (payload.get("project_key") or "").strip()
 
     if not base_url or not username or not api_token:
-        from fastapi import HTTPException
         raise HTTPException(status_code=422, detail="base_url, username and api_token are required")
 
+    # ── Verify credentials against Jira before saving ─────────────────────────
+    # Try Bearer first (PAT on Jira DC/Server with SSO/LDAP where Basic auth is disabled),
+    # then fall back to Basic auth (older Jira or password-based auth).
+    # Store which method worked in refresh_token so JiraService can use the right one.
+    import httpx as _httpx
+
+    async def _probe(client: _httpx.AsyncClient, **kwargs) -> _httpx.Response:
+        return await client.get(
+            f"{base_url}/rest/api/2/myself",
+            timeout=10,
+            follow_redirects=False,
+            **kwargs,
+        )
+
+    me: dict = {}
+    auth_method: str = ""
+
+    try:
+        async with _httpx.AsyncClient() as client:
+            # 1. Bearer (PAT)
+            r = await _probe(client, headers={"Authorization": f"Bearer {api_token}"})
+            if r.is_success:
+                me, auth_method = r.json(), "bearer"
+            else:
+                # 2. Basic auth (username:password or username:PAT)
+                r = await _probe(client, auth=(username, api_token))
+                if r.is_success:
+                    me, auth_method = r.json(), "basic"
+                else:
+                    code = r.status_code
+                    if code in (301, 302, 303, 307, 308):
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=(
+                                "Jira redirected to the login page — neither Bearer nor Basic auth "
+                                "was accepted. Ensure your PAT is valid or contact your Jira admin."
+                            ),
+                        )
+                    if code == 401:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=(
+                                "Jira rejected both Bearer and Basic auth (401). "
+                                "If your organisation uses SSO, generate a Personal Access Token at "
+                                "Profile → Personal Access Tokens and paste it in the token field."
+                            ),
+                        )
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail=f"Jira returned {code} while verifying credentials.",
+                    )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not reach Jira at {base_url}: {exc}",
+        )
+
+    display_name = me.get("displayName") or username
+
+    # ── Credentials verified — save (store auth_method in refresh_token) ──────
     await upsert_oauth_connection(
         db,
         current_user.id,
         "jira_pat",
         access_token=api_token,
-        refresh_token="",
+        refresh_token=auth_method,          # "bearer" | "basic"
         account_email=username,
-        account_name=username,
+        account_name=display_name,
         cloud_url=base_url,
         cloud_id=project_key,
         cloud_name=base_url,
-        account_id="",
+        account_id=me.get("accountId", me.get("name", "")),
     )
-    return {"saved": True, "username": username, "base_url": base_url}
+    return {"saved": True, "username": display_name, "base_url": base_url, "auth_method": auth_method}
 
 
 @router.get("/me/connect")
@@ -343,6 +422,40 @@ async def me_disconnect(
 
 # ── Data endpoints ───────────────────────────────────────────────────────────
 
+def _raise_jira_http_error(exc: Exception, operation: str) -> None:
+    """Convert JIRA HTTP errors into user-friendly FastAPI exceptions."""
+    import httpx as _httpx
+    if isinstance(exc, _httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (301, 302, 303, 307, 308):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "JIRA redirected to the login page — your credentials were not recognised. "
+                    "Go to JIRA Settings, re-enter your username and password (or PAT), and try again."
+                ),
+            )
+        if code == 401:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=(
+                    "JIRA authentication failed (401). "
+                    "Your username or token is incorrect. "
+                    "Go to JIRA Settings and re-enter your credentials."
+                ),
+            )
+        if code == 403:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="JIRA returned 403 — your account may not have permission for this project.",
+            )
+    logger.exception("%s failed: %s", operation, exc)
+    raise HTTPException(
+        status_code=status.HTTP_502_BAD_GATEWAY,
+        detail=f"JIRA request failed: {exc}",
+    )
+
+
 @router.get("/boards")
 async def list_boards(
     project_key: Optional[str] = Query(default=None, description="Filter by project key"),
@@ -356,8 +469,7 @@ async def list_boards(
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     except Exception as exc:
-        logger.exception("list_boards failed: %s", exc)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"JIRA request failed: {exc}")
+        _raise_jira_http_error(exc, "list_boards")
     return {"boards": boards, "total": len(boards)}
 
 
@@ -374,8 +486,7 @@ async def list_projects(
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
     except Exception as exc:
-        logger.exception("list_projects failed: %s", exc)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"JIRA request failed: {exc}")
+        _raise_jira_http_error(exc, "list_projects")
     return {"projects": projects, "total": len(projects)}
 
 
@@ -418,9 +529,10 @@ def _close_tab_html(success: bool, message: str) -> HTMLResponse:
     - Calls window.opener.postMessage so the parent tab knows the result
     - Closes itself
     """
+    import json as _json
     color   = "#16a34a" if success else "#dc2626"
     icon    = "✅" if success else "❌"
-    payload = '{"type":"jira_oauth","success":' + ("true" if success else "false") + '}'
+    payload = _json.dumps({"type": "jira_oauth", "success": success, "message": message})
 
     html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>JIRA Connection</title>
