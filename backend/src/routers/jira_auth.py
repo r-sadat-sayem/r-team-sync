@@ -89,7 +89,7 @@ async def connect(
             detail="ATLASSIAN_CLIENT_ID not configured. See .env.example.",
         )
 
-    callback = str(request.url_for("jira_oauth_callback"))
+    callback = f"{settings.backend_url.rstrip('/')}/api/v1/jira/auth/callback"
     params = {
         "audience":      "api.atlassian.com",
         "client_id":     settings.atlassian_client_id,
@@ -145,7 +145,7 @@ async def callback(
         logger.warning("JIRA OAuth callback for session %s: no code and no error", state)
         return _close_tab_html(success=False, message="JIRA connection failed: no authorisation code received.")
 
-    callback_url = str(request.url_for("jira_oauth_callback"))
+    callback_url = f"{settings.backend_url.rstrip('/')}/api/v1/jira/auth/callback"
 
     try:
         async with httpx.AsyncClient() as client:
@@ -408,7 +408,7 @@ async def me_connect(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="ATLASSIAN_CLIENT_ID not configured. See .env.example.",
         )
-    callback = str(request.url_for("jira_oauth_callback"))
+    callback = f"{settings.backend_url.rstrip('/')}/api/v1/jira/auth/callback"
     # Use "user:{id}" as state so the callback can skip session ownership check
     params = {
         "audience":      "api.atlassian.com",

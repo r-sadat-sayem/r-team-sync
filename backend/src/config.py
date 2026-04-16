@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     # App
     debug: bool = False
     log_level: str = "info"
+    backend_url: str = "http://localhost:8000"
     frontend_url: str = "http://localhost:5173"
 
     # Database — LangGraph checkpointer + app tables share one DB

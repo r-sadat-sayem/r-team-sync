@@ -71,7 +71,7 @@ async def connect(
             detail="GOOGLE_CLIENT_ID not configured. See .env.example.",
         )
 
-    callback = str(request.url_for("gmail_oauth_callback"))
+    callback = f"{settings.backend_url.rstrip('/')}/api/v1/email/auth/callback"
     params = {
         "client_id":     settings.google_client_id,
         "redirect_uri":  callback,
@@ -101,7 +101,7 @@ async def callback(
         logger.warning("Gmail OAuth error for session %s: %s", state, error)
         return _close_tab_html(False, f"Gmail connection failed: {error_description or error}")
 
-    callback_url = str(request.url_for("gmail_oauth_callback"))
+    callback_url = f"{settings.backend_url.rstrip('/')}/api/v1/email/auth/callback"
 
     try:
         async with httpx.AsyncClient() as client:

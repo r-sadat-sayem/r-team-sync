@@ -119,7 +119,11 @@ async def _create_auth_session(
 
 
 def _google_callback_url(request: Request) -> str:
-    return str(request.url_for("google_login_callback"))
+    """Return the Google OAuth callback URL.
+    Uses settings.backend_url for a stable, predictable redirect_uri
+    that matches what's registered in Google Cloud Console.
+    """
+    return f"{settings.backend_url.rstrip('/')}/api/v1/auth/google/callback"
 
 
 def _frontend_auth_redirect(path: str, error: Optional[str] = None) -> str:
