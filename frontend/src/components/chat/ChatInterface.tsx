@@ -5,13 +5,12 @@ import remarkGfm from 'remark-gfm';
 import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
 import { InlineEmailForm } from './InlineEmailForm';
-import { InlineJiraForm } from './InlineJiraForm';
+import { InlineJiraForm, type JiraFormSubmitData } from './InlineJiraForm';
 import { InlineActionMenu } from './InlineActionMenu';
 import { InlinePRDOutlineForm } from './InlinePRDOutlineForm';
 import { PRDArtifactCard } from './PRDArtifactCard';
-import { Send, Bot, User, Loader2, ExternalLink, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, Copy, Check } from 'lucide-react';
+import { Send, Bot, User, Loader2, ExternalLink, RefreshCw, Paperclip, X, FileText, Image as ImageIcon, Copy, Check, List, ListOrdered, Bold, Italic, CornerDownLeft } from 'lucide-react';
 import type { Message, PRDDocument, SSEEvent, UploadedFile } from '../../types';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -176,10 +175,19 @@ export function ChatInterface() {
   activeTabRef.current = activeTab;
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef   = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [activeTab.messages, streamingText, activeTab.interrupt]);
+
+  // Auto-resize textarea whenever input changes
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
 
   // ── File staging helpers ──────────────────────────────────────────────────
   const stageFiles = useCallback((incoming: FileList | File[]) => {
@@ -313,6 +321,13 @@ export function ChatInterface() {
         });
         break;
       }
+      case 'prd_deprecated': {
+        const currentPRDId = activeTabRef.current?.currentPRD?.id;
+        if (currentPRDId) {
+          dispatch({ type: 'MARK_PRD_DEPRECATED', payload: currentPRDId });
+        }
+        break;
+      }
       case 'prd_complete': {
         inPRDRef.current = false;
         const markdown = prdAccRef.current || streamRef.current;
@@ -327,6 +342,7 @@ export function ChatInterface() {
           testCaseCount: countTC(markdown),
           fileName: ev.file_name,
           sessionId: activeTabRef.current.sessionId,
+          version: ev.prd_version,
         };
         dispatch({ type: 'SET_CURRENT_PRD', payload: prd });
         dispatch({ type: 'ADD_PRD_TO_HISTORY', payload: prd });
@@ -474,17 +490,122 @@ export function ChatInterface() {
   };
 
   // ── Resume: JIRA form ─────────────────────────────────────────────────
-  const handleJiraSubmit = async (data: { decision: string; assignee_email: string; notes: string; project_key: string }) => {
+  const handleJiraSubmit = async (data: JiraFormSubmitData) => {
     dispatch({ type: 'SET_INTERRUPT', payload: null });
     if (!activeTab.sessionId) return;
     await runStream(api.resumeSession(activeTab.sessionId, data));
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+  // ── Formatting toolbar ───────────────────────────────────────────────────
+  const insertFormat = useCallback((type: 'bullet' | 'numbered' | 'bold' | 'italic') => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const start = el.selectionStart;
+    const end   = el.selectionEnd;
+    const sel   = input.slice(start, end);
+
+    let insert = '';
+    let cursorOffset = 0;
+
+    switch (type) {
+      case 'bullet':
+        insert = sel
+          ? sel.split('\n').map(l => `- ${l}`).join('\n')
+          : '- ';
+        cursorOffset = sel ? insert.length : 2;
+        break;
+      case 'numbered':
+        insert = sel
+          ? sel.split('\n').map((l, i) => `${i + 1}. ${l}`).join('\n')
+          : '1. ';
+        cursorOffset = sel ? insert.length : 3;
+        break;
+      case 'bold':
+        insert = sel ? `**${sel}**` : '**bold**';
+        cursorOffset = sel ? insert.length : 2;
+        break;
+      case 'italic':
+        insert = sel ? `_${sel}_` : '_italic_';
+        cursorOffset = sel ? insert.length : 1;
+        break;
     }
+
+    const next = input.slice(0, start) + insert + input.slice(end);
+    setInput(next);
+    requestAnimationFrame(() => {
+      if (el) {
+        const pos = start + cursorOffset;
+        el.setSelectionRange(pos, pos);
+        el.focus();
+      }
+    });
+  }, [input]);
+
+  // ── Keyboard handler with auto-list continuation ──────────────────────────
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+
+    const el = textareaRef.current;
+    if (!el) { e.preventDefault(); handleSend(); return; }
+
+    const cursor    = el.selectionStart;
+    const before    = input.slice(0, cursor);
+    const lastLine  = before.split('\n').pop() ?? '';
+
+    // Bullet list continuation: "- text" or "* text"
+    const bulletMatch = lastLine.match(/^(\s*[-*]) (.+)$/);
+    if (bulletMatch) {
+      e.preventDefault();
+      const marker  = `${bulletMatch[1]} `;
+      const newText = input.slice(0, cursor) + `\n${marker}` + input.slice(cursor);
+      setInput(newText);
+      requestAnimationFrame(() => {
+        const pos = cursor + 1 + marker.length;
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+
+    // Empty bullet ("- " or "* " with nothing after) → strip the marker
+    const emptyBullet = lastLine.match(/^(\s*[-*])\s*$/);
+    if (emptyBullet) {
+      e.preventDefault();
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const newText   = input.slice(0, lineStart) + input.slice(cursor);
+      setInput(newText);
+      requestAnimationFrame(() => el.setSelectionRange(lineStart, lineStart));
+      return;
+    }
+
+    // Numbered list continuation: "1. text"
+    const numMatch = lastLine.match(/^(\s*)(\d+)\. (.+)$/);
+    if (numMatch) {
+      e.preventDefault();
+      const indent  = numMatch[1];
+      const marker  = `${indent}${parseInt(numMatch[2]) + 1}. `;
+      const newText = input.slice(0, cursor) + `\n${marker}` + input.slice(cursor);
+      setInput(newText);
+      requestAnimationFrame(() => {
+        const pos = cursor + 1 + marker.length;
+        el.setSelectionRange(pos, pos);
+      });
+      return;
+    }
+
+    // Empty numbered item ("1. " with nothing after) → strip the marker
+    const emptyNum = lastLine.match(/^(\s*)\d+\.\s*$/);
+    if (emptyNum) {
+      e.preventDefault();
+      const lineStart = before.lastIndexOf('\n') + 1;
+      const newText   = input.slice(0, lineStart) + input.slice(cursor);
+      setInput(newText);
+      requestAnimationFrame(() => el.setSelectionRange(lineStart, lineStart));
+      return;
+    }
+
+    // Default: send
+    e.preventDefault();
+    handleSend();
   };
 
   // ── JIRA result card ──────────────────────────────────────────────────
@@ -798,25 +919,79 @@ export function ChatInterface() {
 
       {/* Input bar */}
       <div
-        className={`chat-input-bar flex gap-2 transition-opacity ${activeTab.interrupt ? 'opacity-40 pointer-events-none' : ''}`}
+        className={`chat-input-bar flex flex-col gap-1.5 transition-opacity ${activeTab.interrupt ? 'opacity-40 pointer-events-none' : ''}`}
         role="group"
         aria-label="Message input"
       >
-        {/* Paperclip — attach files */}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={activeTab.isTyping || !!activeTab.interrupt || isUploading}
-          aria-label="Attach files"
-          className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-white/10 bg-background-tertiary text-text-muted hover:text-text-primary hover:border-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {isUploading
-            ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
-            : <Paperclip className="w-4 h-4" aria-hidden="true" />}
-        </button>
+        {/* Formatting toolbar */}
+        <div className="flex items-center gap-0.5 px-1">
+          <button
+            type="button"
+            onClick={() => insertFormat('bullet')}
+            disabled={activeTab.isTyping || !!activeTab.interrupt}
+            title="Bullet list (- item)"
+            aria-label="Insert bullet list"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/8 disabled:opacity-30 transition-colors"
+          >
+            <List className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => insertFormat('numbered')}
+            disabled={activeTab.isTyping || !!activeTab.interrupt}
+            title="Numbered list (1. item)"
+            aria-label="Insert numbered list"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/8 disabled:opacity-30 transition-colors"
+          >
+            <ListOrdered className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => insertFormat('bold')}
+            disabled={activeTab.isTyping || !!activeTab.interrupt}
+            title="Bold (**text**)"
+            aria-label="Bold"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/8 disabled:opacity-30 transition-colors"
+          >
+            <Bold className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => insertFormat('italic')}
+            disabled={activeTab.isTyping || !!activeTab.interrupt}
+            title="Italic (_text_)"
+            aria-label="Italic"
+            className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/8 disabled:opacity-30 transition-colors"
+          >
+            <Italic className="w-3.5 h-3.5" />
+          </button>
 
-        <div className="flex-1">
-          <Input
+          <span className="ml-auto flex items-center gap-1 text-[10px] text-text-muted select-none">
+            <CornerDownLeft className="w-3 h-3" />
+            <span>Send</span>
+            <span className="opacity-50 mx-1">·</span>
+            <kbd className="font-mono">Shift</kbd><span>+</span><CornerDownLeft className="w-3 h-3" />
+            <span>New line</span>
+          </span>
+        </div>
+
+        {/* Textarea + action buttons row */}
+        <div className="flex gap-2 items-end">
+          {/* Paperclip — attach files */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={activeTab.isTyping || !!activeTab.interrupt || isUploading}
+            aria-label="Attach files"
+            className="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl border border-white/10 bg-background-tertiary text-text-muted hover:text-text-primary hover:border-primary/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors self-end mb-0"
+          >
+            {isUploading
+              ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              : <Paperclip className="w-4 h-4" aria-hidden="true" />}
+          </button>
+
+          <textarea
+            ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -824,18 +999,21 @@ export function ChatInterface() {
             disabled={activeTab.isTyping || !!activeTab.interrupt || isUploading}
             aria-label="Message"
             aria-disabled={activeTab.isTyping || !!activeTab.interrupt || isUploading}
+            rows={1}
+            className="flex-1 resize-none px-4 py-2.5 bg-background-tertiary border border-white/10 rounded-xl text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 min-h-[42px] max-h-[200px] overflow-y-auto leading-relaxed disabled:opacity-50"
           />
+
+          <Button
+            onClick={handleSend}
+            disabled={(!input.trim() && stagedFiles.length === 0) || activeTab.isTyping || !!activeTab.interrupt || isUploading}
+            aria-label={activeTab.isTyping || isUploading ? 'Sending…' : 'Send message'}
+            className="px-4 self-end"
+          >
+            {activeTab.isTyping || isUploading
+              ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
+              : <Send className="w-5 h-5" aria-hidden="true" />}
+          </Button>
         </div>
-        <Button
-          onClick={handleSend}
-          disabled={(!input.trim() && stagedFiles.length === 0) || activeTab.isTyping || !!activeTab.interrupt || isUploading}
-          aria-label={activeTab.isTyping || isUploading ? 'Sending…' : 'Send message'}
-          className="px-4"
-        >
-          {activeTab.isTyping || isUploading
-            ? <Loader2 className="w-5 h-5 animate-spin" aria-hidden="true" />
-            : <Send className="w-5 h-5" aria-hidden="true" />}
-        </Button>
       </div>
     </div>
   );

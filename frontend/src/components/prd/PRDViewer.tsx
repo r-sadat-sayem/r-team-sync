@@ -7,13 +7,13 @@ import { useApp } from '../../context/AppContext';
 import { api } from '../../services/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Download, Copy, Check, FileText, ChevronLeft, Mail, Ticket, ChevronDown } from 'lucide-react';
+import { Download, Copy, Check, FileText, ChevronLeft, Mail, Ticket, ChevronDown, AlertTriangle, MessageSquare } from 'lucide-react';
 import type { PRDDocument } from '../../types';
 
 export function PRDViewer() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { activeTab } = useApp();
+  const { activeTab, dispatch } = useApp();
   const [prd, setPrd] = useState<PRDDocument | null>(null);
   const [copied, setCopied] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -102,6 +102,22 @@ export function PRDViewer() {
             {prd.grade} Grade • {prd.qualityScore}/100
           </span>
 
+          {/* Chat reference */}
+          {prd.sessionId && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                dispatch({ type: 'RESTORE_SESSION', payload: { sessionId: prd.sessionId!, label: prd.title } });
+                navigate('/');
+              }}
+              title="Open the chat session that generated this PRD"
+            >
+              <MessageSquare className="w-4 h-4 mr-2" />
+              View Chat
+            </Button>
+          )}
+
           {/* Actions */}
           <Button variant="secondary" size="sm" onClick={handleCopy}>
             {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
@@ -121,6 +137,19 @@ export function PRDViewer() {
           </Button>
         </div>
       </div>
+
+      {/* Deprecated banner */}
+      {prd.deprecated && (
+        <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-amber-400 flex-shrink-0" aria-hidden="true" />
+          <div>
+            <p className="text-sm font-semibold text-amber-400">Deprecated Version</p>
+            <p className="text-xs text-amber-300/70">
+              A newer version of this PRD was generated in the same session.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Content */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">

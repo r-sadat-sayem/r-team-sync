@@ -12,7 +12,7 @@ SSE event shapes:
 """
 import logging
 import re
-from datetime import date
+from datetime import date, datetime, timezone
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -283,6 +283,52 @@ RULES:
 """
 
 
+# ── Node: archive_prd ────────────────────────────────────────────────────────
+
+def archive_prd(state: PRDState) -> dict:
+    """
+    Archive the current PRD as a deprecated version, then restart generation
+    from the outline step. Triggered when the user asks to regenerate/review the PRD.
+
+    Emits:
+      {"type": "prd_deprecated", "prd_version": N, "file_name": "...", "grade": "...", "quality_score": N}
+      {"type": "status",         "message": "Archiving current PRD — restarting generation…"}
+    """
+    writer = get_stream_writer()
+    current_version = state.get("prd_version") or 1
+
+    archived = {
+        "markdown":      state.get("prd_markdown", ""),
+        "quality_score": state.get("quality_score", 0),
+        "grade":         state.get("grade", ""),
+        "file_name":     state.get("file_name", ""),
+        "deprecated":    True,
+        "version":       current_version,
+        "timestamp":     datetime.now(timezone.utc).isoformat(),
+    }
+
+    writer({
+        "type":          "prd_deprecated",
+        "prd_version":   current_version,
+        "file_name":     archived["file_name"],
+        "grade":         archived["grade"],
+        "quality_score": archived["quality_score"],
+    })
+    writer({"type": "status", "message": "Archiving current PRD — restarting generation…"})
+
+    return {
+        "prd_history":       [archived],   # _append reducer adds to list
+        "prd_version":       current_version + 1,
+        "prd_markdown":      "",
+        "quality_score":     0,
+        "grade":             "",
+        "file_name":         "",
+        "prd_outline":       "",
+        "pending_interrupt": None,
+        "mode":              "generate",   # context_summary preserved — skip re-analysis
+    }
+
+
 # ── Node: generate_prd_outline ───────────────────────────────────────────────
 
 async def generate_prd_outline(state: PRDState) -> dict:
@@ -516,10 +562,11 @@ def validate(state: PRDState) -> dict:
     logger.info("validate: score=%d grade=%s file=%s", score, grade, file_name)
 
     writer({
-        "type":       "prd_complete",
-        "score":      score,
-        "grade":      grade,
-        "file_name":  file_name,
+        "type":        "prd_complete",
+        "score":       score,
+        "grade":       grade,
+        "file_name":   file_name,
+        "prd_version": state.get("prd_version") or 1,
     })
 
     return {
@@ -606,34 +653,83 @@ async def jira_interrupt(state: PRDState, config: RunnableConfig) -> dict:
     """
     Suspend execution and wait for the reviewer to approve JIRA ticket creation.
 
-    The interrupt payload includes JIRA connection status so the frontend can
-    show a 'Connect JIRA' button if the user hasn't authenticated yet.
+    The interrupt payload includes:
+    - JIRA connection status (so the frontend shows a Connect button if needed)
+    - Available projects (fetched live if the user is connected)
+    - Epic title preview extracted from the PRD (so users see the draft before approving)
     """
     from langgraph.types import interrupt
     from src.db import SessionLocal
     from src.services.oauth_connections import get_oauth_connection
+    from src.services.jira import JiraService, extract_jira_items
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
 
     session_id  = config["configurable"].get("thread_id", "")
     user_id     = int(config["configurable"].get("user_id", "0"))
+
+    available_projects: list[dict] = []
+    available_epics:    list[dict] = []
     async with SessionLocal() as db:
         token = await get_oauth_connection(db, user_id, "jira")
+        # Opportunistically fetch projects + existing epics so the frontend can
+        # show selectors.  Non-fatal: form renders even if Jira is unreachable.
+        if token:
+            try:
+                svc = await JiraService.for_user(db, user_id)
+                try:
+                    raw = await svc.search_projects()
+                    available_projects = [
+                        {"key": p["key"], "name": p.get("name", p["key"])}
+                        for p in raw[:25]
+                    ]
+                except Exception as exc:
+                    _log.warning("Could not fetch JIRA projects for interrupt: %s", exc)
+                try:
+                    available_epics = await svc.search_epics(settings.jira_project_key)
+                except Exception as exc:
+                    _log.warning("Could not fetch JIRA epics for interrupt: %s", exc)
+            except Exception as exc:
+                _log.warning("Could not build JiraService for interrupt payload: %s", exc)
+
     connected   = token is not None
     connect_url = f"/api/v1/jira/auth/connect?session_id={session_id}"
 
+    # Extract Epic title + description from the PRD for the editable preview.
+    prd_md   = state.get("prd_markdown", "")
+    fallback = state.get("file_name", "PRD Feature").replace("_", " ")
+    if prd_md:
+        prd_items               = extract_jira_items(prd_md, fallback)
+        epic_title_preview      = prd_items["epic_title"]
+        epic_description_preview = prd_items["epic_description"]
+    else:
+        epic_title_preview       = fallback
+        epic_description_preview = ""
+
     form_data = interrupt({
-        "form":            "jira_form",
-        "message":         "Review the PRD and approve JIRA ticket creation.",
-        "fields":          ["decision", "assignee_email", "notes"],
-        "hint":            "Type 'approve' to create tickets or 'skip' to finish without JIRA.",
-        "jira_connected":  connected,
-        "jira_user":       token.account_name if connected else None,
-        "jira_cloud":      token.cloud_name if connected else None,
-        "connect_url":     None if connected else connect_url,
+        "form":                    "jira_form",
+        "message":                 "Review and edit the proposed JIRA structure, then approve.",
+        "fields":                  ["decision", "assignee_email", "notes", "project_key",
+                                    "epic_title", "epic_description", "parent_epic_key"],
+        "hint":                    "Approve to create Epic → Stories → Subtasks, or skip.",
+        "jira_connected":          connected,
+        "jira_user":               token.account_name if connected else None,
+        "jira_cloud":              token.cloud_name if connected else None,
+        "connect_url":             None if connected else connect_url,
+        "available_projects":      available_projects,
+        "default_project":         settings.jira_project_key,
+        "epic_title_preview":      epic_title_preview,
+        "epic_description_preview": epic_description_preview,
+        "available_epics":         available_epics,
     })
     return {
-        "jira_decision":       form_data.get("decision", "skip").lower().strip(),
-        "jira_assignee_email": form_data.get("assignee_email", "").strip(),
-        "jira_notes":          form_data.get("notes", "").strip(),
+        "jira_decision":        form_data.get("decision", "skip").lower().strip(),
+        "jira_assignee_email":  form_data.get("assignee_email", "").strip(),
+        "jira_notes":           form_data.get("notes", "").strip(),
+        "jira_project_key":     form_data.get("project_key", "").strip(),
+        "jira_epic_title":      form_data.get("epic_title", "").strip(),
+        "jira_epic_description": form_data.get("epic_description", "").strip(),
+        "jira_parent_epic_key": form_data.get("parent_epic_key", "").strip(),
     }
 
 
@@ -663,6 +759,10 @@ async def create_jira(state: PRDState, config: RunnableConfig) -> dict:
         prd_markdown=state["prd_markdown"],
         feature_name=state.get("file_name", "PRD Feature").replace("_", " "),
         assignee_email=state.get("jira_assignee_email", ""),
+        project_key=state.get("jira_project_key", ""),
+        epic_title_override=state.get("jira_epic_title", ""),
+        epic_description_override=state.get("jira_epic_description", ""),
+        parent_epic_key=state.get("jira_parent_epic_key", ""),
     )
 
     writer({

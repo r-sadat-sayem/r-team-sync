@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 import { useApp } from '../../context/AppContext';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '../ui/Button';
-import { Trash2, Sparkles, Menu, X, LogOut } from 'lucide-react';
+import { Trash2, Sparkles, Menu, X, LogOut, FileText, Loader2, CheckCircle2 } from 'lucide-react';
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -35,14 +35,45 @@ export function Header({ onMenuToggle, sidebarOpen }: HeaderProps) {
     }
   };
 
-  const modeTitle =
-    activeTab.currentMode === 'analyze' ? 'Requirements Gathering' :
+  // ── Chat status panel (shown on "/" route) ──────────────────────────────
+  const isChat = !pageTitle;
+
+  const statusDot =
+    activeTab.isTyping                         ? 'bg-blue-400 animate-pulse' :
+    activeTab.currentMode === 'analyze'        ? 'bg-blue-400/60' :
+    activeTab.currentMode === 'generate'       ? 'bg-amber-400 animate-pulse' :
+    /* complete */                               'bg-emerald-400';
+
+  const phaseLabel =
+    activeTab.currentMode === 'analyze'  ? (activeTab.messages.length === 0 ? 'Ready' : 'Gathering Requirements') :
     activeTab.currentMode === 'generate' ? 'Generating PRD…' :
-    'PRD Complete';
+    /* complete */                          'PRD Ready';
+
+  const phaseIcon =
+    activeTab.isTyping                         ? <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" /> :
+    activeTab.currentMode === 'complete'       ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> :
+    activeTab.currentMode === 'generate'       ? <FileText className="w-3.5 h-3.5 text-amber-400" /> :
+    /* analyze */                                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${statusDot}`} />;
+
+  const tipText =
+    activeTab.isTyping                                                                  ? '' :
+    activeTab.interrupt                                                                 ? 'Fill in the form below to continue' :
+    activeTab.currentMode === 'analyze' && activeTab.messages.length === 0             ? 'Describe your feature idea to get started' :
+    activeTab.currentMode === 'analyze'                                                ? 'Share more details — Sam will signal when ready to generate' :
+    activeTab.currentMode === 'complete' && activeTab.currentPRD                       ? 'Type "email", "test cases", "jira", or "regenerate prd" to continue' :
+    /* generate / fallback */                                                            '';
+
+  const gradeColors: Record<string, string> = {
+    A: 'bg-emerald-400/15 text-emerald-400 border-emerald-400/30',
+    B: 'bg-blue-400/15 text-blue-400 border-blue-400/30',
+    C: 'bg-yellow-400/15 text-yellow-400 border-yellow-400/30',
+    D: 'bg-orange-400/15 text-orange-400 border-orange-400/30',
+    F: 'bg-red-400/15 text-red-400 border-red-400/30',
+  };
 
   return (
     <header className="h-14 lg:h-16 bg-background-secondary/50 backdrop-blur-md border-b border-white/8 px-3 md:px-4 lg:px-6 flex items-center justify-between sticky top-0 z-20">
-      {/* Left: hamburger + title */}
+      {/* Left: hamburger + title / status */}
       <div className="flex items-center gap-3 min-w-0">
         <button
           onClick={onMenuToggle}
@@ -53,14 +84,39 @@ export function Header({ onMenuToggle, sidebarOpen }: HeaderProps) {
           {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
 
-        <h2 className="text-sm lg:text-lg font-semibold text-text-primary truncate">
-          {pageTitle ?? modeTitle}
-        </h2>
+        {isChat ? (
+          /* ── Chat status panel ── */
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Phase icon + label */}
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {phaseIcon}
+              <span className="text-sm font-semibold text-text-primary whitespace-nowrap">
+                {phaseLabel}
+              </span>
+            </div>
 
-        {activeTab.currentPRD && !pageTitle && (
-          <span className="hidden sm:inline-flex flex-shrink-0 px-2 py-1 bg-primary/20 text-primary-light text-xs rounded-full border border-primary/30">
-            {activeTab.currentPRD.grade} Grade
-          </span>
+            {/* Grade badge (complete only) */}
+            {activeTab.currentPRD && activeTab.currentMode === 'complete' && (
+              <span className={`hidden sm:inline-flex flex-shrink-0 px-2 py-0.5 text-xs font-bold rounded-full border ${gradeColors[activeTab.currentPRD.grade] ?? gradeColors.F}`}>
+                {activeTab.currentPRD.grade} · {activeTab.currentPRD.qualityScore}/100
+              </span>
+            )}
+
+            {/* Separator + contextual tip */}
+            {tipText && (
+              <>
+                <span className="hidden lg:inline text-white/15 flex-shrink-0">·</span>
+                <span className="hidden lg:block text-xs text-text-muted truncate max-w-xs" aria-live="polite">
+                  {tipText}
+                </span>
+              </>
+            )}
+          </div>
+        ) : (
+          /* ── Other page title ── */
+          <h2 className="text-sm lg:text-lg font-semibold text-text-primary truncate">
+            {pageTitle}
+          </h2>
         )}
       </div>
 

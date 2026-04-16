@@ -11,6 +11,7 @@ export interface Message {
     qualityScore?: number;
     grade?: string;
     prdId?: string;
+    docType?: 'prd' | 'test_cases';
   };
 }
 
@@ -32,6 +33,8 @@ export interface PRDDocument {
   fileName?: string;
   sessionId?: string;   // LangGraph thread_id — lets History link back to the session
   docType?: 'prd' | 'test_cases';
+  deprecated?: boolean; // true when a newer version was generated in the same session
+  version?: number;     // 1-based PRD version number within the session
 }
 
 export interface PRDSection {
@@ -120,6 +123,9 @@ export interface InterruptPayload {
   countdown_seconds?: number;
   available_projects?: { key: string; name: string }[];
   default_project?: string;
+  epic_title_preview?: string;
+  epic_description_preview?: string;
+  available_epics?: { key: string; summary: string }[];
   actions_taken?: string[];
 }
 
@@ -141,7 +147,8 @@ export interface JiraConnectionStatus {
 export type SSEEvent =
   | { type: 'token';                content: string }
   | { type: 'status';               message: string }
-  | { type: 'prd_complete';         score: number; grade: string; file_name: string }
+  | { type: 'prd_complete';         score: number; grade: string; file_name: string; prd_version?: number }
+  | { type: 'prd_deprecated';       prd_version: number; file_name: string; grade: string; quality_score: number }
   | { type: 'test_cases_complete';  file_name: string; tc_count: number }
   | { type: 'email_sent';           recipient: string }
   | { type: 'interrupt' } & InterruptPayload
@@ -194,6 +201,7 @@ export type AppAction =
   | { type: 'RESET_STATE' }
   | { type: 'RESTORE_SESSION'; payload: { sessionId: string; label?: string } }
   | { type: 'SET_JIRA_CONNECTION'; payload: JiraConnectionStatus | null }
+  | { type: 'MARK_PRD_DEPRECATED'; payload: string }  // PRD id
   | { type: 'NEW_TAB' }
   | { type: 'SWITCH_TAB'; payload: string }   // tabId
   | { type: 'CLOSE_TAB'; payload: string };   // tabId

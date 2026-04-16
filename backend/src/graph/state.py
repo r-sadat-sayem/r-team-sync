@@ -40,6 +40,9 @@ class PRDState(TypedDict):
     jira_assignee_email: str
     jira_notes: str
     jira_project_key: str
+    jira_epic_title: str          # user-edited Epic title (overrides PRD extraction)
+    jira_epic_description: str   # user-edited Epic description
+    jira_parent_epic_key: str    # existing Epic key — if set, skip creating a new Epic
 
     # Set by generate_prd_outline node.
     prd_outline: str
@@ -65,3 +68,10 @@ class PRDState(TypedDict):
     epic_key: str
     epic_url: str
     task_keys: Annotated[list[str], _append]
+
+    # PRD version history — each entry is a deprecated PRD snapshot dict:
+    # {markdown, quality_score, grade, file_name, deprecated, version, timestamp}
+    prd_history: Annotated[list[dict], _append]
+
+    # Increments each time archive_prd runs. Starts at 1 for the first PRD.
+    prd_version: int

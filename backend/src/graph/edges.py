@@ -19,7 +19,30 @@ from src.graph.state import PRDState
 logger = logging.getLogger(__name__)
 
 _DIRECT_COMMANDS: list[tuple[re.Pattern, str]] = [
-    (re.compile(r"^/jira\b|^create\s+jira\b|^generate\s+jira\b", re.I),                         "jira_interrupt"),
+    # PRD regeneration — must come first so it takes priority over JIRA/test-case commands.
+    # Context: only fires when a PRD already exists (checked by route_entry).
+    (re.compile(
+        r"^/regenerate\b|^/regen\b"
+        r"|\b(regenerate|rewrite|redo)\s+(the\s+)?(prd|requirements?\s+doc(?:ument)?|spec)\b"
+        r"|\b(review|revise|update)\s+(the\s+)?prd\b"
+        r"|\bnew\s+prd\b"
+        r"|\bstart\s+over\s+(with|on)\s+(the\s+)?prd\b",
+        re.I,
+    ), "archive_prd"),
+    # JIRA — matches natural-language and slash-command variants.
+    # Context: only fires when a PRD already exists (checked by route_entry).
+    (re.compile(
+        r"^/jira\b"                                        # /jira
+        r"|^jira\b"                                        # "jira", "jira please"
+        r"|(?:create|make|generate|build|add|push)\b"      # verb ...
+        r"(?:\s+\w+){0,3}\s+jira\b"                       #   ... (up to 3 words) ... jira
+        r"|(?:create|make|generate|build|add|push)\b"      # verb ...
+        r"(?:\s+\w+){0,3}\s+tickets?\b"                   #   ... ticket / tickets
+        r"|\bjira\b.*\btickets?\b"                         # "jira ... ticket"
+        r"|\btickets?\b.*\bjira\b"                         # "ticket ... jira"
+        r"|^(?:add|push)\s+(?:it\s+)?to\s+jira\b",        # add to jira / push to jira
+        re.I,
+    ), "jira_interrupt"),
     (re.compile(r"^/testcases?\b|^generate\s+test\s+cases?\b|^create\s+test\s+cases?\b", re.I), "generate_test_cases"),
 ]
 
@@ -35,7 +58,7 @@ def _last_user_message(state: PRDState) -> str:
 def route_entry(
     state: PRDState,
 ) -> Literal["analyze", "generate_prd_outline", "generate_prd",
-             "generate_test_cases", "jira_interrupt"]:
+             "generate_test_cases", "jira_interrupt", "archive_prd"]:
     """
     Entry point routing for new user messages.
 
