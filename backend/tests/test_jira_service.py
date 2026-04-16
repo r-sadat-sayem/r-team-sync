@@ -79,3 +79,44 @@ async def test_search_projects_falls_back_to_latest_project_list(monkeypatch: py
     projects = await service.search_projects("alp")
 
     assert projects == [{"id": "2", "key": "ABC", "name": "Alpha"}]
+
+
+@pytest.mark.asyncio
+async def test_create_from_ticket_plan_creates_parent_and_subtasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = JiraService(
+        base_url="https://jira.example.com",
+        auth_headers={},
+        basic_auth=("user", "token"),
+        project="TSA",
+        auth_mode="pat",
+        cloud_url="https://jira.example.com",
+    )
+    created_fields: list[dict] = []
+    keys = iter(["TSA-100", "TSA-101", "TSA-102"])
+
+    async def fake_create_issue(fields: dict) -> str:
+        created_fields.append(fields)
+        return next(keys)
+
+    monkeypatch.setattr(service, "_create_issue", fake_create_issue)
+
+    result = await service.create_from_ticket_plan(
+        {
+            "project_key": "TSA",
+            "parent": {
+                "issue_type": "Story",
+                "summary": "Parent story",
+                "description": "Parent description",
+            },
+            "subtasks": [
+                {"summary": "Implement behavior"},
+                {"summary": "QA validation"},
+            ],
+        }
+    )
+
+    assert result["parent_key"] == "TSA-100"
+    assert result["task_keys"] == ["TSA-101", "TSA-102"]
+    assert created_fields[0]["summary"] == "Parent story"
+    assert created_fields[0]["issuetype"] == {"name": "Story"}
+    assert created_fields[1]["parent"] == {"key": "TSA-100"}

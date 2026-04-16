@@ -336,6 +336,25 @@ class JiraService:
             fields["assignee"] = {"accountId": account_id}
         return await self._create_issue(fields)
 
+    async def create_parent_issue(
+        self,
+        title: str,
+        description: str,
+        account_id: Optional[str],
+        project: str = "",
+        issue_type: str = "",
+    ) -> str:
+        fields: dict = {
+            "project": {"key": project or self._project},
+            "issuetype": {"name": issue_type or settings.jira_story_type},
+            "summary": title,
+        }
+        if description:
+            fields["description"] = _adf(description)
+        if account_id:
+            fields["assignee"] = {"accountId": account_id}
+        return await self._create_issue(fields)
+
     # ── Board & project discovery ─────────────────────────────────────────────
 
     async def fetch_all_boards(self, project_key: Optional[str] = None) -> List[dict]:
@@ -493,4 +512,45 @@ class JiraService:
             "assignee_name": assignee_name,
             "auth_mode":     self._auth_mode,
             "cloud_url":     self._cloud_url,
+        }
+
+    async def create_from_ticket_plan(
+        self,
+        proposal: dict,
+        *,
+        assignee_email: str = "",
+        project_key: str = "",
+    ) -> dict:
+        proj = project_key or proposal.get("project_key") or self._project
+        account_id = await self.get_account_id(assignee_email) if assignee_email else None
+        assignee_name = ""
+        if account_id:
+            assignee_name = await self.get_display_name(account_id)
+
+        parent = proposal.get("parent", {})
+        parent_key = await self.create_parent_issue(
+            title=parent.get("summary", "Planned work"),
+            description=parent.get("description", ""),
+            account_id=account_id,
+            project=proj,
+            issue_type=parent.get("issue_type", settings.jira_story_type),
+        )
+
+        task_keys: list[str] = []
+        for task in proposal.get("subtasks", []):
+            task_key = await self.create_subtask(
+                title=task.get("summary", "Implementation task"),
+                parent_key=parent_key,
+                account_id=account_id,
+                project=proj,
+            )
+            task_keys.append(task_key)
+
+        return {
+            "parent_key": parent_key,
+            "parent_url": self._browse_url(parent_key),
+            "task_keys": task_keys,
+            "assignee_name": assignee_name,
+            "auth_mode": self._auth_mode,
+            "cloud_url": self._cloud_url,
         }

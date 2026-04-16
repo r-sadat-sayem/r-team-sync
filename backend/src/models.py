@@ -85,3 +85,47 @@ class OAuthConnection(Base):
     )
 
     user: Mapped[User] = relationship(back_populates="oauth_connections")
+
+
+class SlackJiraRequest(Base):
+    __tablename__ = "slack_jira_requests"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "channel_id", "thread_ts", name="uq_slack_jira_request_thread"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(120), index=True)
+    channel_id: Mapped[str] = mapped_column(String(120), index=True)
+    thread_ts: Mapped[str] = mapped_column(String(64), index=True)
+    root_message_ts: Mapped[str] = mapped_column(String(64), default="")
+    requester_slack_id: Mapped[str] = mapped_column(String(120), default="")
+    requester_name: Mapped[str] = mapped_column(String(255), default="")
+    project_key: Mapped[str] = mapped_column(String(50), default="")
+    status: Mapped[str] = mapped_column(String(50), default="collecting", index=True)
+    summary: Mapped[str] = mapped_column(String(255), default="")
+    background: Mapped[str] = mapped_column(Text, default="")
+    purpose: Mapped[str] = mapped_column(Text, default="")
+    device: Mapped[str] = mapped_column(String(64), default="")
+    priority: Mapped[str] = mapped_column(String(32), default="")
+    transcript: Mapped[str] = mapped_column(Text, default="")
+    proposal_json: Mapped[str] = mapped_column(Text, default="")
+    confluence_draft: Mapped[str] = mapped_column(Text, default="")
+    approval_notes: Mapped[str] = mapped_column(Text, default="")
+    approved_by_slack_id: Mapped[str] = mapped_column(String(120), default="")
+    approved_by_name: Mapped[str] = mapped_column(String(255), default="")
+    created_ticket_keys_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+
+class SlackEventDelivery(Base):
+    __tablename__ = "slack_event_deliveries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(120), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
