@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     jira_story_type: str = "Story"
     jira_subtask_type: str = "Subtask"
 
+    # Slack JIRA Helper
+    slack_signing_secret: str = ""
+    slack_bot_token: str = ""
+    slack_jira_approver_ids: str = ""
+    slack_jira_default_project_key: str = ""
+
     @property
     def pg_conn_string(self) -> str:
         """Synchronous psycopg connection string for LangGraph checkpointer."""
