@@ -312,6 +312,15 @@ class TeamSyncAPI {
     return res.json();
   }
 
+  async getJiraEpics(projectKey: string): Promise<{ epics: { key: string; summary: string }[]; total: number }> {
+    const res = await this.request(`/api/v1/jira/auth/epics?project_key=${encodeURIComponent(projectKey)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err as any).detail || 'Failed to fetch epics');
+    }
+    return res.json();
+  }
+
   async saveJiraPat(credentials: {
     base_url: string;
     username: string;

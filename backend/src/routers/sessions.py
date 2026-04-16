@@ -105,10 +105,14 @@ def _build_resume_command(interrupt_payload: dict, form_data: dict):
         )
         update = {
             "pending_interrupt": None,
-            "jira_decision": decision,
-            "jira_assignee_email": form_data.get("assignee_email", "").strip(),
-            "jira_notes": form_data.get("notes", "").strip(),
-            "jira_project_key": project_key,
+            "jira_decision":          decision,
+            "jira_assignee_email":    form_data.get("assignee_email", "").strip(),
+            "jira_notes":             form_data.get("notes", "").strip(),
+            "jira_project_key":       project_key,
+            # User-edited Epic fields — empty string means "use PRD extraction"
+            "jira_epic_title":        form_data.get("epic_title", "").strip(),
+            "jira_epic_description":  form_data.get("epic_description", "").strip(),
+            "jira_parent_epic_key":   form_data.get("parent_epic_key", "").strip(),
         }
         if decision == "approve":
             return Command(update=update, goto="create_jira")

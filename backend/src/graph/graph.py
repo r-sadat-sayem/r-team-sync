@@ -19,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from src.graph.edges import route_after_analyze, route_entry
 from src.graph.nodes import (
     analyze,
+    archive_prd,
     create_jira,
     email_interrupt,
     generate_prd,
@@ -41,6 +42,7 @@ def build_graph(checkpointer=None):
 
     # ── Nodes ─────────────────────────────────────────────────
     builder.add_node("analyze",               analyze)
+    builder.add_node("archive_prd",           archive_prd)
     builder.add_node("generate_prd_outline",  generate_prd_outline)
     builder.add_node("prd_outline_interrupt", prd_outline_interrupt)
     builder.add_node("generate_prd",          generate_prd)
@@ -59,12 +61,15 @@ def build_graph(checkpointer=None):
         route_entry,
         {
             "analyze":              "analyze",
+            "archive_prd":          "archive_prd",
             "generate_prd_outline": "generate_prd_outline",
             "generate_prd":         "generate_prd",
             "generate_test_cases":  "generate_test_cases",
             "jira_interrupt":       "jira_interrupt",
         },
     )
+
+    builder.add_edge("archive_prd", "generate_prd_outline")
 
     builder.add_conditional_edges(
         "analyze",
@@ -86,7 +91,10 @@ def build_graph(checkpointer=None):
     builder.add_edge("validate_test_cases",   "post_prd_interrupt")
 
     builder.add_edge("jira_interrupt",         END)
-    builder.add_edge("create_jira",            END)
+    # After creating tickets, return to the post-PRD action menu so the user
+    # can still email, generate test cases, or finish.  The menu will show
+    # "JIRA created ✓" because create_jira appends "jira" to actions_taken.
+    builder.add_edge("create_jira",            "post_prd_interrupt")
 
     resolved_checkpointer = checkpointer if checkpointer is not None else MemorySaver()
     graph = builder.compile(checkpointer=resolved_checkpointer)
@@ -119,7 +127,12 @@ def get_default_state() -> PRDState:
         jira_assignee_email="",
         jira_notes="",
         jira_project_key="",
+        jira_epic_title="",
+        jira_epic_description="",
+        jira_parent_epic_key="",
         epic_key="",
         epic_url="",
         task_keys=[],
+        prd_history=[],
+        prd_version=1,
     )

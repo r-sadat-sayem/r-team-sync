@@ -153,6 +153,21 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'SET_JIRA_CONNECTION':
       return { ...state, jiraConnection: action.payload };
 
+    case 'MARK_PRD_DEPRECATED': {
+      const updated = state.prdHistory.map(p =>
+        p.id === action.payload ? { ...p, deprecated: true } : p,
+      );
+      api.replacePRDHistory(updated);
+      // Also reflect deprecation on the active tab's currentPRD if it matches
+      const tabs = state.tabs.map(t =>
+        t.id === state.activeTabId && t.currentPRD?.id === action.payload
+          ? { ...t, currentPRD: { ...t.currentPRD, deprecated: true } }
+          : t,
+      );
+      api.saveChatTabs(tabs);
+      return { ...state, prdHistory: updated, tabs };
+    }
+
     case 'CLEAR_CHAT': {
       const cleared = createTab({
         id: state.activeTabId,

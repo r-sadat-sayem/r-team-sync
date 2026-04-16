@@ -1,5 +1,5 @@
 // components/jira/JIRATicketViewer.tsx
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { JIRAApprovalForm } from '../../types';
 import { useApp } from '../../context/AppContext';
@@ -7,7 +7,7 @@ import { useApp } from '../../context/AppContext';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/Card';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
-import { Ticket, CheckCircle, AlertCircle, ChevronLeft, ExternalLink, Clock, User, Loader2, Link2, Link2Off, Eye, EyeOff } from 'lucide-react';
+import { Ticket, CheckCircle, AlertCircle, ChevronLeft, ExternalLink, Clock, User, Loader2, Link2, Link2Off, Eye, EyeOff, MessageSquare } from 'lucide-react';
 import { api } from '../../services/api';
 
 
@@ -30,6 +30,27 @@ export function JIRATicketViewer() {
   const [showPat, setShowPat] = useState(false);
 
   const jira = state.jiraConnection;
+
+  // Derive the board URL from the epic URL + board ID fetched from the API
+  const [boardUrl, setBoardUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const epicKey = activeTab.jiraResult?.epic_key;
+    const epicUrl = activeTab.jiraResult?.epic_url;
+    if (!epicKey || !epicUrl || !jira?.connected) return;
+
+    const projectKey = epicKey.split('-')[0];
+    // e.g. "https://org.atlassian.net/browse/TSA-3" → "https://org.atlassian.net"
+    const cloudBase = epicUrl.replace(/\/browse\/.*$/, '');
+
+    api.getJiraBoards(projectKey)
+      .then(data => {
+        const board = (data as any).boards?.[0];
+        if (board?.id) {
+          setBoardUrl(`${cloudBase}/jira/software/projects/${projectKey}/boards/${board.id}`);
+        }
+      })
+      .catch(() => { /* board link is optional — fail silently */ });
+  }, [activeTab.jiraResult?.epic_key, activeTab.jiraResult?.epic_url, jira?.connected]);
 
   const pollStatus = useCallback(async () => {
     try {
@@ -148,10 +169,10 @@ export function JIRATicketViewer() {
           </Button>
           <h1 className="text-2xl font-bold text-text-primary">JIRA Tickets</h1>
         </div>
-        {activeTab.jiraResult?.epic_url && (
-          <Button variant="secondary" onClick={() => window.open(activeTab.jiraResult!.epic_url, '_blank')}>
+        {boardUrl && (
+          <Button variant="secondary" onClick={() => window.open(boardUrl, '_blank')}>
             <ExternalLink className="w-4 h-4 mr-2" />
-            Open Epic
+            Open Board
           </Button>
         )}
       </div>
@@ -297,9 +318,26 @@ export function JIRATicketViewer() {
       {activeTab.jiraResult && (
         <Card className="border-l-4 border-l-purple-500">
           <CardContent className="p-5 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
-              <CheckCircle className="w-4 h-4 text-emerald-400" />
-              Tickets created from PRD
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                Tickets created from PRD
+              </div>
+              {activeTab.sessionId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    dispatch({ type: 'RESTORE_SESSION', payload: { sessionId: activeTab.sessionId, label: activeTab.label } });
+                    navigate('/');
+                  }}
+                  title="Open the chat session that generated these tickets"
+                  className="text-text-muted hover:text-primary-light"
+                >
+                  <MessageSquare className="w-3.5 h-3.5 mr-1" />
+                  <span className="text-xs">View Chat</span>
+                </Button>
+              )}
             </div>
             <div className="space-y-2">
               <a
@@ -406,7 +444,7 @@ export function JIRATicketViewer() {
         </Card>
       ) : (
         <div className="space-y-4">
-          {state.jiraTickets.length === 0 ? (
+          {state.jiraTickets.length === 0 && !activeTab.jiraResult ? (
             <Card className="text-center py-12">
               <Ticket className="w-16 h-16 text-text-muted mx-auto mb-4" />
               <h3 className="text-xl font-semibold text-text-primary mb-2">No Tickets Yet</h3>

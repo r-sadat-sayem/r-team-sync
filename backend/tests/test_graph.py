@@ -65,11 +65,18 @@ MINIMAL_PRD = """\
 **FR4**: As an admin I want permissions.
 **FR5**: As a user I want notifications.
 # Non-Functional Requirements
-# Scope
+# In Scope
 # Success Metrics
+## Test Cases
+**TC001: Basic flow** — verify happy path.
+**TC002: Error handling** — verify error state.
+**TC003: Edge case A** — verify boundary.
+**TC004: Edge case B** — verify boundary.
+**TC005: Integration** — verify end-to-end.
 # Technical Considerations
 # Timeline and Milestones
 """ + "x" * 5100  # push length above 5000
+# Scoring breakdown: 8/8 sections (+50) + 5 TCs (+15) + length>5000 (+20) = 85
 
 
 def test_score_prd_good_document():
@@ -152,7 +159,12 @@ def test_resume_command_jira_skip_only_updates_state():
         {"decision": "skip", "project_key": "TS"},
     )
 
-    assert cmd.goto == ()
+    # Skip uses goto="__end__" to bypass the suspended jira_interrupt node
+    assert cmd.goto == "__end__"
     assert cmd.update["jira_decision"] == "skip"
     assert cmd.update["jira_project_key"] == "TS"
     assert cmd.update["pending_interrupt"] is None
+    # New fields default to empty string when not supplied
+    assert cmd.update["jira_epic_title"] == ""
+    assert cmd.update["jira_epic_description"] == ""
+    assert cmd.update["jira_parent_epic_key"] == ""
