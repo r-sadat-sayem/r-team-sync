@@ -69,6 +69,9 @@ desktop.ini
 *.swo
 *.suo
 
+# ── Legacy / archived artifacts ───────────────────────────────────────────
+trash/
+
 # ── Claude / local tooling (never commit) ────────────────────────────────
 .claude/
 .planning/debug/
